@@ -8,6 +8,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from crypto_smc.config import Settings, get_settings
+from crypto_smc.db.repositories.market_data import MarketDataRepository
 from crypto_smc.db.repositories.universe import UniverseRepository
 from crypto_smc.db.session import create_engine, create_session_factory, database_is_ready
 from crypto_smc.observability.logging import configure_logging
@@ -33,6 +34,7 @@ def create_app(
     )
     session_factory = create_session_factory(app_engine)
     universe_repository = UniverseRepository()
+    market_data_repository = MarketDataRepository()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -121,6 +123,14 @@ def create_app(
                 for member in members
                 if not member.is_selected
             ]
+        return response
+
+    @app.get("/market-data/status", tags=["market-data"])
+    async def market_data_status(include_symbols: bool = False) -> dict[str, object]:
+        async with session_factory() as session:
+            response = await market_data_repository.status_summary(session)
+            if include_symbols:
+                response["symbols"] = await market_data_repository.checkpoint_details(session)
         return response
 
     if app_settings.debug_api_enabled:

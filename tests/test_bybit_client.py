@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -176,3 +177,87 @@ async def test_list_linear_tickers_normalizes_market_data() -> None:
 
     assert tickers["BTCUSDT"].turnover_24h == 100_000_000
     assert tickers["BTCUSDT"].spread_bps == 20
+
+
+@pytest.mark.asyncio
+async def test_get_closed_1m_klines_sorts_reverse_bybit_response() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "category": "linear",
+                    "symbol": "BTCUSDT",
+                    "list": [
+                        ["1735689660000", "101", "103", "100", "102", "12", "1200"],
+                        ["1735689600000", "100", "102", "99", "101", "10", "1000"],
+                    ],
+                },
+                "time": 1735689720000,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitClient(
+        base_url="https://unused.test",
+        timeout_seconds=1,
+        instrument_page_size=1000,
+        http_client=http_client,
+    )
+
+    candles = await client.get_closed_1m_klines(
+        symbol="BTCUSDT",
+        start_time=datetime(2025, 1, 1, 0, 0, tzinfo=UTC),
+        end_time=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+        limit=2,
+    )
+    await http_client.aclose()
+
+    assert [candle.open_time.minute for candle in candles] == [0, 1]
+    assert candles[1].close_price == 102
+
+
+@pytest.mark.asyncio
+async def test_bybit_client_retries_http_429() -> None:
+    attempts = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": "0"},
+                json={"retCode": 10006, "retMsg": "Too many visits!"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {"timeSecond": "1735809771", "timeNano": "1735809771123456789"},
+                "time": 1735809771123,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitClient(
+        base_url="https://unused.test",
+        timeout_seconds=1,
+        instrument_page_size=1000,
+        max_retries=1,
+        retry_base_seconds=0.001,
+        http_client=http_client,
+    )
+
+    assert await client.server_time_ms() == 1735809771123
+    assert attempts == 2
+    await http_client.aclose()

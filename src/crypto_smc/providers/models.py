@@ -68,3 +68,16 @@ class MarketTicker(BaseModel):
         if midpoint <= 0:
             return None
         return (self.ask_price - self.bid_price) / midpoint * Decimal(10_000)
+
+
+class Candle1m(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    open_time: datetime
+    open_price: Decimal
+    high_price: Decimal
+    low_price: Decimal
+    close_price: Decimal
+    volume: Decimal
+    turnover: Decimal

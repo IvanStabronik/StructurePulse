@@ -89,3 +89,20 @@ class BybitTickerResponse(BaseModel):
     retMsg: str
     result: BybitTickerResult
     time: int
+
+
+class BybitKlineResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    category: str
+    symbol: str
+    list: list[list[str]]
+
+
+class BybitKlineResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    retCode: int
+    retMsg: str
+    result: BybitKlineResult
+    time: int

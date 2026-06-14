@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     bybit_base_url: str = "https://api.bybit.com"
     bybit_request_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     bybit_instrument_page_size: int = Field(default=1000, ge=1, le=1000)
+    bybit_max_requests_per_second: float = Field(default=8.0, gt=0, le=100)
+    bybit_max_concurrency: int = Field(default=4, ge=1, le=20)
+    bybit_max_retries: int = Field(default=5, ge=0, le=10)
+    bybit_retry_base_seconds: float = Field(default=0.5, gt=0, le=10)
 
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_api_key: str | None = None
@@ -35,6 +39,11 @@ class Settings(BaseSettings):
     universe_max_spread_bps: Decimal = Field(default=Decimal("20"), ge=0)
     universe_min_trading_history_days: int = Field(default=30, ge=0)
     universe_manual_denylist: frozenset[str] = frozenset()
+
+    market_data_initial_history_minutes: int = Field(default=10_080, ge=60, le=259_200)
+    market_data_sync_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    market_data_backfill_batch_candles: int = Field(default=1000, ge=1, le=1000)
+    market_data_max_parallel_symbols: int = Field(default=3, ge=1, le=20)
 
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()

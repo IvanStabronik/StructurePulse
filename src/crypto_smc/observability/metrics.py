@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 BYBIT_REQUESTS = Counter(
     "crypto_smc_bybit_requests_total",
@@ -10,6 +10,12 @@ BYBIT_REQUEST_DURATION = Histogram(
     "crypto_smc_bybit_request_duration_seconds",
     "Bybit REST request duration",
     labelnames=("endpoint",),
+)
+
+BYBIT_RATE_LIMIT_EVENTS = Counter(
+    "crypto_smc_bybit_rate_limit_events_total",
+    "Bybit REST rate-limit responses and waits",
+    labelnames=("reason",),
 )
 
 COINGECKO_REQUESTS = Counter(
@@ -28,4 +34,15 @@ UNIVERSE_REFRESHES = Counter(
     "crypto_smc_universe_refreshes_total",
     "Universe refresh attempts",
     labelnames=("outcome",),
+)
+
+MARKET_DATA_SYNC_RESULTS = Counter(
+    "crypto_smc_market_data_sync_results_total",
+    "Market-data symbol synchronization results",
+    labelnames=("result",),
+)
+
+MARKET_DATA_UNRESOLVED_GAPS = Gauge(
+    "crypto_smc_market_data_unresolved_gaps",
+    "Current unresolved market-data gaps",
 )
