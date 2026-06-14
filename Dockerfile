@@ -18,6 +18,7 @@ RUN rm -rf src
 COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY scripts ./scripts
 COPY tests ./tests
 
 RUN chown -R app:app /app

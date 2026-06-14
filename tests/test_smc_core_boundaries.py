@@ -12,6 +12,14 @@ FORBIDDEN_IMPORT_ROOTS = {
     "sqlalchemy",
 }
 
+FORBIDDEN_CALL_NAMES = {
+    "create_task",
+    "get_event_loop",
+    "get_running_loop",
+    "run",
+    "run_until_complete",
+}
+
 
 def test_smc_core_has_no_infrastructure_imports() -> None:
     package_root = Path("src/smc_core")
@@ -29,5 +37,15 @@ def test_smc_core_has_no_infrastructure_imports() -> None:
             forbidden = imported_roots & FORBIDDEN_IMPORT_ROOTS
             if forbidden:
                 violations.append(f"{path}: {sorted(forbidden)}")
+            if isinstance(node, ast.Call):
+                function_name = (
+                    node.func.id
+                    if isinstance(node.func, ast.Name)
+                    else node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else None
+                )
+                if function_name in FORBIDDEN_CALL_NAMES:
+                    violations.append(f"{path}: forbidden call {function_name}")
 
     assert violations == []

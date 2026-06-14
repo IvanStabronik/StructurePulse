@@ -7,7 +7,10 @@ available. Closed 1m candles are streamed through sharded Bybit WebSockets and
 recovered through REST with durable checkpoints, buffering, and gap tracking.
 Canonical 1m data is deterministically aggregated into 5m, 15m, 1H, and 4H
 candles through a durable priority queue with resumable historical rebuilds.
-Strategy and Telegram signal delivery are not implemented yet.
+The pure synchronous `smc_core` package detects deterministic swings,
+structure breaks, liquidity events, displacement, FVGs, Order Blocks, and
+dealing ranges. Strategy composition and Telegram signal delivery are not
+implemented yet.
 
 ## Requirements
 
@@ -45,6 +48,7 @@ docker compose run --rm api ruff format --check .
 docker compose run --rm api mypy
 docker compose run --rm api pytest
 docker compose config
+docker compose run --rm api python scripts/profile_smc_core.py
 ```
 
 ## Database migrations

@@ -145,6 +145,11 @@ Acceptance:
 
 Goal: implement deterministic, independently testable market structures.
 
+Status: completed on 2026-06-14. `smc_core` is a pure synchronous package with
+immutable inputs and outputs, mirrored fixture coverage, explicit boundary
+rules, a bounded process-pool adapter, and a reproducible 10,000-candle
+profiling script.
+
 Tasks:
 
 - `M4-00` Create `smc_core` as a synchronous pure domain package with no

@@ -142,6 +142,11 @@ Responsibilities:
 The engine is a pure domain library wherever practical. Given the same candles
 and strategy configuration, it must return the same result.
 
+The exact v1 primitive definitions and boundary behavior are documented in
+`docs/smc-core.md`. Infrastructure code may schedule `smc_core` work, but it
+must not add exchange, persistence, or event-loop behavior to the domain
+package.
+
 Strategy calculations must never run directly on the market-data event loop
 when they can exceed the configured CPU budget:
 
