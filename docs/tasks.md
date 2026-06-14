@@ -74,6 +74,10 @@ Acceptance:
 
 Goal: maintain complete, durable closed 1m candles for the active universe.
 
+Status: completed on 2026-06-14. The implementation uses two configurable
+WebSocket shards for the initial 30-symbol universe, buffers closed candles
+during synchronous REST recovery, and exposes worker metrics on port 8001.
+
 Tasks:
 
 - `M2-01` Create candle, checkpoint, and data-gap tables.

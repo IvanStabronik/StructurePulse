@@ -104,6 +104,14 @@ class MarketDataBackfillService:
             last_closed_open_time=last_closed_open_time,
         )
         if start_time > last_closed_open_time:
+            if checkpoint_time is not None:
+                await self._repository.complete_gap(
+                    session_factory=self._session_factory,
+                    gap_id=None,
+                    symbol=target.symbol,
+                    stream=STREAM_NAME,
+                    last_confirmed_open_time=checkpoint_time,
+                )
             return "ready"
 
         async with self._parallelism:

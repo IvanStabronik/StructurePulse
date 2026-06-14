@@ -3,9 +3,9 @@
 Signal-only monitor for Bybit USDT Linear Perpetual futures. The project is in
 the foundation phase: infrastructure, health checks, PostgreSQL migrations,
 read-only Bybit instrument discovery, and a daily 30-asset market universe are
-available. Closed 1m candles are recovered through Bybit REST with durable
-checkpoints and gap tracking. WebSocket ingestion, strategy, and Telegram
-signal delivery are not implemented yet.
+available. Closed 1m candles are streamed through sharded Bybit WebSockets and
+recovered through REST with durable checkpoints, buffering, and gap tracking.
+Strategy and Telegram signal delivery are not implemented yet.
 
 ## Requirements
 
@@ -26,7 +26,8 @@ Open:
 
 - Liveness: `http://localhost:8000/health/live`
 - Readiness: `http://localhost:8000/health/ready`
-- Metrics: `http://localhost:8000/metrics`
+- API metrics: `http://localhost:8000/metrics`
+- Worker market-data metrics: `http://localhost:8001/metrics`
 - Current universe: `http://localhost:8000/universe/current`
 - Market-data status: `http://localhost:8000/market-data/status`
 - Debug instruments: `http://localhost:8000/debug/instruments`

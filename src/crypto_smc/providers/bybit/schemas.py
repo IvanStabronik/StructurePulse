@@ -106,3 +106,28 @@ class BybitKlineResponse(BaseModel):
     retMsg: str
     result: BybitKlineResult
     time: int
+
+
+class BybitWebSocketKline(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    start: int
+    end: int
+    interval: str
+    open: str
+    close: str
+    high: str
+    low: str
+    volume: str
+    turnover: str
+    confirm: bool
+    timestamp: int
+
+
+class BybitWebSocketKlineMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    topic: str
+    type: str
+    ts: int
+    data: list[BybitWebSocketKline]

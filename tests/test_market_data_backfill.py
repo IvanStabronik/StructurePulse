@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from crypto_smc.db.repositories.market_data import MarketDataTarget
 from crypto_smc.market_data.backfill import (
     IncompleteKlineRangeError,
     MarketDataBackfillService,
@@ -21,6 +22,46 @@ def candle(open_time: datetime) -> Candle1m:
         volume=Decimal("10"),
         turnover=Decimal("1000"),
     )
+
+
+class ReadyRepository:
+    def __init__(self) -> None:
+        self.completed_at: datetime | None = None
+
+    async def complete_gap(
+        self,
+        *,
+        last_confirmed_open_time: datetime,
+        **_: object,
+    ) -> None:
+        self.completed_at = last_confirmed_open_time
+
+
+@pytest.mark.asyncio
+async def test_current_checkpoint_is_returned_to_ready_state() -> None:
+    checkpoint = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    repository = ReadyRepository()
+    service = MarketDataBackfillService(
+        provider=object(),  # type: ignore[arg-type]
+        session_factory=object(),  # type: ignore[arg-type]
+        initial_history_minutes=60,
+        batch_candles=1000,
+        max_parallel_symbols=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    result = await service._sync_target(
+        target=MarketDataTarget(
+            symbol="BTCUSDT",
+            market_cap_rank=1,
+            launch_time=datetime(2020, 1, 1, tzinfo=UTC),
+        ),
+        checkpoint_time=checkpoint,
+        last_closed_open_time=checkpoint,
+    )
+
+    assert result == "ready"
+    assert repository.completed_at == checkpoint
 
 
 def test_last_closed_minute_excludes_current_candle() -> None:

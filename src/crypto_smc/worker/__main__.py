@@ -1,20 +1,22 @@
 import asyncio
 
+from prometheus_client import start_http_server
+
 from crypto_smc.config import get_settings
 from crypto_smc.db.session import create_engine, create_session_factory
-from crypto_smc.market_data import MarketDataBackfillService
+from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
-from crypto_smc.providers.bybit import BybitClient
+from crypto_smc.providers.bybit import BybitClient, BybitKlineWebSocketManager
 from crypto_smc.providers.coingecko import CoinGeckoClient
-from crypto_smc.runtime import run_periodic
+from crypto_smc.runtime import run_until_stopped
 from crypto_smc.services.universe_refresh import UniverseRefreshService
-from crypto_smc.services.worker_cycle import WorkerCycle
 from crypto_smc.universe import UniversePolicyConfig
 
 
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    start_http_server(settings.worker_metrics_port, addr="0.0.0.0")
     engine = create_engine(settings.database_url)
     provider = BybitClient(
         base_url=settings.bybit_base_url,
@@ -53,15 +55,26 @@ async def main() -> None:
         batch_candles=settings.market_data_backfill_batch_candles,
         max_parallel_symbols=settings.market_data_max_parallel_symbols,
     )
-    worker_cycle = WorkerCycle(
+    stream_manager = BybitKlineWebSocketManager(
+        url=settings.bybit_ws_url,
+        shard_size=settings.bybit_ws_shard_size,
+        queue_size=settings.bybit_ws_queue_size,
+        heartbeat_seconds=settings.bybit_ws_heartbeat_seconds,
+        reconnect_base_seconds=settings.bybit_ws_reconnect_base_seconds,
+        reconnect_max_seconds=settings.bybit_ws_reconnect_max_seconds,
+        ready_timeout_seconds=settings.bybit_ws_ready_timeout_seconds,
+    )
+    live_market_data = LiveMarketDataService(
+        stream=stream_manager,
+        backfill=market_data_service,
         universe_refresh=universe_service,
-        market_data_sync=market_data_service,
+        session_factory=session_factory,
+        reconciliation_interval_seconds=settings.market_data_sync_interval_seconds,
     )
 
     try:
-        await run_periodic(
-            worker_cycle.run_once,
-            interval_seconds=settings.market_data_sync_interval_seconds,
+        await run_until_stopped(
+            live_market_data.run,
             service_name="worker",
         )
     finally:

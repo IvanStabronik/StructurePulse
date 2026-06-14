@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -15,6 +16,8 @@ from crypto_smc.db.models import (
 )
 from crypto_smc.providers.models import Candle1m
 
+LiveIngestResult = Literal["ready", "duplicate", "gap"]
+
 
 @dataclass(frozen=True, slots=True)
 class MarketDataTarget:
@@ -24,6 +27,10 @@ class MarketDataTarget:
 
 
 class MarketDataRepository:
+    async def list_active_symbols(self, session: AsyncSession) -> tuple[str, ...]:
+        targets = await self.list_active_targets(session)
+        return tuple(target.symbol for target in targets)
+
     async def list_active_targets(
         self,
         session: AsyncSession,
@@ -116,36 +123,7 @@ class MarketDataRepository:
             return
         async with session_factory() as session, session.begin():
             await self._ensure_partitions(session, candles)
-            values = [
-                {
-                    "symbol": candle.symbol,
-                    "open_time": candle.open_time,
-                    "open_price": candle.open_price,
-                    "high_price": candle.high_price,
-                    "low_price": candle.low_price,
-                    "close_price": candle.close_price,
-                    "volume": candle.volume,
-                    "turnover": candle.turnover,
-                    "source": "rest",
-                    "updated_at": datetime.now(UTC),
-                }
-                for candle in candles
-            ]
-            statement = insert(Candle1mRecord).values(values)
-            statement = statement.on_conflict_do_update(
-                index_elements=[Candle1mRecord.symbol, Candle1mRecord.open_time],
-                set_={
-                    "open_price": statement.excluded.open_price,
-                    "high_price": statement.excluded.high_price,
-                    "low_price": statement.excluded.low_price,
-                    "close_price": statement.excluded.close_price,
-                    "volume": statement.excluded.volume,
-                    "turnover": statement.excluded.turnover,
-                    "source": statement.excluded.source,
-                    "updated_at": statement.excluded.updated_at,
-                },
-            )
-            await session.execute(statement)
+            await self._upsert_candles(session, candles=candles, source="rest")
             await self._upsert_checkpoint(
                 session,
                 symbol=symbol,
@@ -154,6 +132,108 @@ class MarketDataRepository:
                 last_confirmed_open_time=candles[-1].open_time,
                 last_error=None,
             )
+
+    async def ingest_live_candle(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        stream: str,
+        candle: Candle1m,
+    ) -> LiveIngestResult:
+        async with session_factory() as session, session.begin():
+            checkpoint = await session.scalar(
+                select(DataCheckpointRecord)
+                .where(
+                    DataCheckpointRecord.symbol == candle.symbol,
+                    DataCheckpointRecord.stream == stream,
+                )
+                .with_for_update()
+            )
+            await self._ensure_partitions(session, [candle])
+            await self._upsert_candles(session, candles=[candle], source="websocket")
+
+            last_confirmed = checkpoint.last_confirmed_open_time if checkpoint is not None else None
+            if last_confirmed is None:
+                await self._upsert_checkpoint(
+                    session,
+                    symbol=candle.symbol,
+                    stream=stream,
+                    state="degraded",
+                    last_confirmed_open_time=None,
+                    last_error="live candle received before recovery checkpoint",
+                    preserve_last_confirmed=True,
+                )
+                return "gap"
+
+            if candle.open_time <= last_confirmed:
+                return "duplicate"
+
+            expected_open_time = last_confirmed + timedelta(minutes=1)
+            if candle.open_time == expected_open_time:
+                await self._upsert_checkpoint(
+                    session,
+                    symbol=candle.symbol,
+                    stream=stream,
+                    state="ready",
+                    last_confirmed_open_time=candle.open_time,
+                    last_error=None,
+                )
+                return "ready"
+
+            await self._upsert_checkpoint(
+                session,
+                symbol=candle.symbol,
+                stream=stream,
+                state="degraded",
+                last_confirmed_open_time=None,
+                last_error=(
+                    f"missing candles from {expected_open_time.isoformat()} "
+                    f"to {(candle.open_time - timedelta(minutes=1)).isoformat()}"
+                ),
+                preserve_last_confirmed=True,
+            )
+            return "gap"
+
+    async def mark_stream_state(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        symbols: tuple[str, ...],
+        stream: str,
+        state: str,
+        error: str | None = None,
+    ) -> None:
+        if not symbols:
+            return
+        async with session_factory() as session, session.begin():
+            for symbol in symbols:
+                await self._upsert_checkpoint(
+                    session,
+                    symbol=symbol,
+                    stream=stream,
+                    state=state,
+                    last_confirmed_open_time=None,
+                    last_error=error,
+                    preserve_last_confirmed=True,
+                )
+
+    async def mark_inactive_streams(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        active_symbols: tuple[str, ...],
+        stream: str,
+    ) -> None:
+        statement = update(DataCheckpointRecord).where(DataCheckpointRecord.stream == stream)
+        if active_symbols:
+            statement = statement.where(DataCheckpointRecord.symbol.not_in(active_symbols))
+        statement = statement.values(
+            state="offline",
+            last_error=None,
+            updated_at=datetime.now(UTC),
+        )
+        async with session_factory() as session, session.begin():
+            await session.execute(statement)
 
     async def complete_gap(
         self,
@@ -265,16 +345,67 @@ class MarketDataRepository:
             "updated_at": datetime.now(UTC),
         }
         statement = insert(DataCheckpointRecord).values(**values)
-        update_values = {
+        update_values: dict[str, Any] = {
             "state": statement.excluded.state,
             "last_error": statement.excluded.last_error,
             "updated_at": statement.excluded.updated_at,
         }
         if not preserve_last_confirmed:
-            update_values["last_confirmed_open_time"] = statement.excluded.last_confirmed_open_time
+            update_values["last_confirmed_open_time"] = case(
+                (
+                    DataCheckpointRecord.last_confirmed_open_time.is_(None),
+                    statement.excluded.last_confirmed_open_time,
+                ),
+                (
+                    statement.excluded.last_confirmed_open_time.is_(None),
+                    DataCheckpointRecord.last_confirmed_open_time,
+                ),
+                else_=func.greatest(
+                    DataCheckpointRecord.last_confirmed_open_time,
+                    statement.excluded.last_confirmed_open_time,
+                ),
+            )
         statement = statement.on_conflict_do_update(
             constraint="uq_data_checkpoints_symbol_stream",
             set_=update_values,
+        )
+        await session.execute(statement)
+
+    @staticmethod
+    async def _upsert_candles(
+        session: AsyncSession,
+        *,
+        candles: list[Candle1m],
+        source: str,
+    ) -> None:
+        values = [
+            {
+                "symbol": candle.symbol,
+                "open_time": candle.open_time,
+                "open_price": candle.open_price,
+                "high_price": candle.high_price,
+                "low_price": candle.low_price,
+                "close_price": candle.close_price,
+                "volume": candle.volume,
+                "turnover": candle.turnover,
+                "source": source,
+                "updated_at": datetime.now(UTC),
+            }
+            for candle in candles
+        ]
+        statement = insert(Candle1mRecord).values(values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[Candle1mRecord.symbol, Candle1mRecord.open_time],
+            set_={
+                "open_price": statement.excluded.open_price,
+                "high_price": statement.excluded.high_price,
+                "low_price": statement.excluded.low_price,
+                "close_price": statement.excluded.close_price,
+                "volume": statement.excluded.volume,
+                "turnover": statement.excluded.turnover,
+                "source": statement.excluded.source,
+                "updated_at": statement.excluded.updated_at,
+            },
         )
         await session.execute(statement)
 

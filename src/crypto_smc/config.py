@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
     debug_api_enabled: bool = False
+    worker_metrics_port: int = Field(default=8001, ge=1, le=65_535)
 
     database_url: str = "postgresql+asyncpg://crypto_smc:crypto_smc@localhost:5432/crypto_smc"
 
@@ -27,6 +28,13 @@ class Settings(BaseSettings):
     bybit_max_concurrency: int = Field(default=4, ge=1, le=20)
     bybit_max_retries: int = Field(default=5, ge=0, le=10)
     bybit_retry_base_seconds: float = Field(default=0.5, gt=0, le=10)
+    bybit_ws_url: str = "wss://stream.bybit.com/v5/public/linear"
+    bybit_ws_shard_size: int = Field(default=15, ge=1, le=100)
+    bybit_ws_queue_size: int = Field(default=2000, ge=100, le=100_000)
+    bybit_ws_heartbeat_seconds: float = Field(default=20, ge=5, le=60)
+    bybit_ws_reconnect_base_seconds: float = Field(default=1, gt=0, le=30)
+    bybit_ws_reconnect_max_seconds: float = Field(default=30, ge=1, le=300)
+    bybit_ws_ready_timeout_seconds: float = Field(default=30, gt=0, le=120)
 
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_api_key: str | None = None

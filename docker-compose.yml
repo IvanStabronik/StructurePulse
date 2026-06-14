@@ -55,6 +55,8 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "crypto_smc.worker"]
+    ports:
+      - "8001:8001"
 
   telegram:
     <<: *app

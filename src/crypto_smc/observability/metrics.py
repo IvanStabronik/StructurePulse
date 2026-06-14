@@ -46,3 +46,26 @@ MARKET_DATA_UNRESOLVED_GAPS = Gauge(
     "crypto_smc_market_data_unresolved_gaps",
     "Current unresolved market-data gaps",
 )
+
+MARKET_DATA_WS_EVENTS = Counter(
+    "crypto_smc_market_data_ws_events_total",
+    "Bybit WebSocket market-data events",
+    labelnames=("outcome",),
+)
+
+MARKET_DATA_WS_RECONNECTS = Counter(
+    "crypto_smc_market_data_ws_reconnects_total",
+    "Bybit WebSocket reconnect attempts",
+    labelnames=("shard",),
+)
+
+MARKET_DATA_WS_QUEUE_DEPTH = Gauge(
+    "crypto_smc_market_data_ws_queue_depth",
+    "Buffered Bybit WebSocket market-data events",
+)
+
+MARKET_DATA_WS_FRESHNESS_SECONDS = Gauge(
+    "crypto_smc_market_data_ws_freshness_seconds",
+    "Delay between the end of a closed 1m candle and receipt",
+    labelnames=("symbol",),
+)
