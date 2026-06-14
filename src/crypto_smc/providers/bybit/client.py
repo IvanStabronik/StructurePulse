@@ -133,6 +133,23 @@ class BybitClient:
         end_time: datetime,
         limit: int,
     ) -> list[Candle1m]:
+        return await self.get_klines(
+            symbol=symbol,
+            interval="1",
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit,
+        )
+
+    async def get_klines(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int,
+    ) -> list[Candle1m]:
         if not 1 <= limit <= 1000:
             raise ValueError("Bybit kline limit must be between 1 and 1000")
         start_ms = self._datetime_to_ms(start_time)
@@ -142,7 +159,7 @@ class BybitClient:
             params={
                 "category": "linear",
                 "symbol": symbol.upper(),
-                "interval": "1",
+                "interval": interval,
                 "start": start_ms,
                 "end": end_ms,
                 "limit": limit,

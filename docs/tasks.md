@@ -111,6 +111,10 @@ Acceptance:
 
 Goal: create deterministic 5m, 15m, 1H, and 4H candles from canonical 1m data.
 
+Status: completed on 2026-06-14. Historical rebuilds are resumable and bounded,
+live intervals have queue priority, incomplete intervals are withheld, and
+sampled aggregates are reconciled against Bybit REST.
+
 Tasks:
 
 - `M3-01` Create aggregated-candle storage and uniqueness constraints.

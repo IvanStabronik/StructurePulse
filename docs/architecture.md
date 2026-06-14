@@ -119,6 +119,15 @@ when a repaired 1m candle changes.
 Exchange timestamps define candle boundaries. Local machine time must never
 define market intervals.
 
+Historical aggregation runs in bounded batches with a durable per-symbol source
+cursor. Live closed candles enqueue higher-priority work, so recovery cannot
+starve current market processing. An aggregate is withheld unless every
+contiguous 1m source candle is present.
+
+Aggregation jobs are idempotent and requeued when canonical 1m data is repaired.
+Sampled aggregates are reconciled against direct Bybit timeframe candles, with
+one recent active-universe sample per timeframe in each standard cycle.
+
 ### 4.4 SMC strategy engine
 
 Responsibilities:

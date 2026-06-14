@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     market_data_backfill_batch_candles: int = Field(default=1000, ge=1, le=1000)
     market_data_max_parallel_symbols: int = Field(default=3, ge=1, le=20)
 
+    aggregation_job_batch_size: int = Field(default=100, ge=1, le=1000)
+    aggregation_source_scan_batch_size: int = Field(default=5000, ge=100, le=50_000)
+    aggregation_poll_interval_seconds: float = Field(default=0.25, ge=0.05, le=10)
+    aggregation_cpu_budget_ms: float = Field(default=25, ge=1, le=1000)
+    aggregation_stale_job_seconds: float = Field(default=300, ge=30, le=3600)
+    aggregation_reconciliation_interval_seconds: float = Field(
+        default=900,
+        ge=60,
+        le=86_400,
+    )
+    aggregation_reconciliation_sample_size: int = Field(default=4, ge=1, le=100)
+
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()
 

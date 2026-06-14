@@ -5,6 +5,8 @@ the foundation phase: infrastructure, health checks, PostgreSQL migrations,
 read-only Bybit instrument discovery, and a daily 30-asset market universe are
 available. Closed 1m candles are streamed through sharded Bybit WebSockets and
 recovered through REST with durable checkpoints, buffering, and gap tracking.
+Canonical 1m data is deterministically aggregated into 5m, 15m, 1H, and 4H
+candles through a durable priority queue with resumable historical rebuilds.
 Strategy and Telegram signal delivery are not implemented yet.
 
 ## Requirements
@@ -30,6 +32,7 @@ Open:
 - Worker market-data metrics: `http://localhost:8001/metrics`
 - Current universe: `http://localhost:8000/universe/current`
 - Market-data status: `http://localhost:8000/market-data/status`
+- Aggregation status: `http://localhost:8000/aggregation/status`
 - Debug instruments: `http://localhost:8000/debug/instruments`
 
 Debug routes exist only when `DEBUG_API_ENABLED=true`.

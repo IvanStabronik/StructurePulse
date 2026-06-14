@@ -34,4 +34,14 @@ class KlineProvider(Protocol):
         limit: int,
     ) -> list[Candle1m]: ...
 
+    async def get_klines(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int,
+    ) -> list[Candle1m]: ...
+
     async def close(self) -> None: ...

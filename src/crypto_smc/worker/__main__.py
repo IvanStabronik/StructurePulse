@@ -2,6 +2,8 @@ import asyncio
 
 from prometheus_client import start_http_server
 
+from crypto_smc.aggregation.reconciliation import AggregationReconciliationService
+from crypto_smc.aggregation.service import AggregationService
 from crypto_smc.config import get_settings
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
@@ -71,10 +73,31 @@ async def main() -> None:
         session_factory=session_factory,
         reconciliation_interval_seconds=settings.market_data_sync_interval_seconds,
     )
+    aggregation_service = AggregationService(
+        session_factory=session_factory,
+        job_batch_size=settings.aggregation_job_batch_size,
+        source_scan_batch_size=settings.aggregation_source_scan_batch_size,
+        poll_interval_seconds=settings.aggregation_poll_interval_seconds,
+        cpu_budget_ms=settings.aggregation_cpu_budget_ms,
+        stale_job_seconds=settings.aggregation_stale_job_seconds,
+    )
+    aggregation_reconciliation = AggregationReconciliationService(
+        provider=provider,
+        session_factory=session_factory,
+        interval_seconds=settings.aggregation_reconciliation_interval_seconds,
+        sample_size=settings.aggregation_reconciliation_sample_size,
+    )
+
+    async def run_worker() -> None:
+        await asyncio.gather(
+            live_market_data.run(),
+            aggregation_service.run(),
+            aggregation_reconciliation.run(),
+        )
 
     try:
         await run_until_stopped(
-            live_market_data.run,
+            run_worker,
             service_name="worker",
         )
     finally:

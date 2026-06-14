@@ -6,7 +6,14 @@ from sqlalchemy import case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from crypto_smc.aggregation.domain import (
+    TIMEFRAMES,
+    Timeframe,
+    interval_end,
+    interval_start,
+)
 from crypto_smc.db.models import (
+    AggregationJobRecord,
     Candle1mRecord,
     DataCheckpointRecord,
     DataGapRecord,
@@ -124,6 +131,12 @@ class MarketDataRepository:
         async with session_factory() as session, session.begin():
             await self._ensure_partitions(session, candles)
             await self._upsert_candles(session, candles=candles, source="rest")
+            await self._enqueue_aggregation_jobs(
+                session,
+                candles=candles,
+                priority=100,
+                completed_only=False,
+            )
             await self._upsert_checkpoint(
                 session,
                 symbol=symbol,
@@ -151,6 +164,12 @@ class MarketDataRepository:
             )
             await self._ensure_partitions(session, [candle])
             await self._upsert_candles(session, candles=[candle], source="websocket")
+            await self._enqueue_aggregation_jobs(
+                session,
+                candles=[candle],
+                priority=0,
+                completed_only=True,
+            )
 
             last_confirmed = checkpoint.last_confirmed_open_time if checkpoint is not None else None
             if last_confirmed is None:
@@ -193,6 +212,24 @@ class MarketDataRepository:
                 preserve_last_confirmed=True,
             )
             return "gap"
+
+    async def repair_candles(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        candles: list[Candle1m],
+    ) -> None:
+        if not candles:
+            return
+        async with session_factory() as session, session.begin():
+            await self._ensure_partitions(session, candles)
+            await self._upsert_candles(session, candles=candles, source="rest")
+            await self._enqueue_aggregation_jobs(
+                session,
+                candles=candles,
+                priority=10,
+                completed_only=False,
+            )
 
     async def mark_stream_state(
         self,
@@ -408,6 +445,50 @@ class MarketDataRepository:
             },
         )
         await session.execute(statement)
+
+    @staticmethod
+    async def _enqueue_aggregation_jobs(
+        session: AsyncSession,
+        *,
+        candles: list[Candle1m],
+        priority: int,
+        completed_only: bool,
+    ) -> None:
+        jobs: set[tuple[str, Timeframe, datetime]] = set()
+        for candle in candles:
+            for timeframe in TIMEFRAMES:
+                aggregate_open_time = interval_start(candle.open_time, timeframe)
+                is_interval_complete = candle.open_time + timedelta(minutes=1) == interval_end(
+                    aggregate_open_time, timeframe
+                )
+                if completed_only and not is_interval_complete:
+                    continue
+                jobs.add((candle.symbol, timeframe, aggregate_open_time))
+
+        now = datetime.now(UTC)
+        for symbol, timeframe, open_time in sorted(jobs):
+            statement = insert(AggregationJobRecord).values(
+                symbol=symbol,
+                timeframe=timeframe,
+                open_time=open_time,
+                priority=priority,
+                state="pending",
+                attempts=0,
+                last_error=None,
+                available_at=now,
+                updated_at=now,
+            )
+            statement = statement.on_conflict_do_update(
+                constraint="uq_aggregation_jobs_interval",
+                set_={
+                    "priority": func.least(AggregationJobRecord.priority, priority),
+                    "state": "pending",
+                    "last_error": None,
+                    "available_at": now,
+                    "updated_at": now,
+                },
+            )
+            await session.execute(statement)
 
     @staticmethod
     async def _ensure_partitions(

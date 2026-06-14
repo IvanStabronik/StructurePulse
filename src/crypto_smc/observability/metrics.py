@@ -69,3 +69,26 @@ MARKET_DATA_WS_FRESHNESS_SECONDS = Gauge(
     "Delay between the end of a closed 1m candle and receipt",
     labelnames=("symbol",),
 )
+
+AGGREGATION_RESULTS = Counter(
+    "crypto_smc_aggregation_results_total",
+    "Aggregate rebuild outcomes",
+    labelnames=("timeframe", "result"),
+)
+
+AGGREGATION_JOB_DURATION = Histogram(
+    "crypto_smc_aggregation_job_duration_seconds",
+    "Aggregate rebuild duration",
+    labelnames=("timeframe",),
+)
+
+AGGREGATION_QUEUE_DEPTH = Gauge(
+    "crypto_smc_aggregation_queue_depth",
+    "Pending and processing aggregate rebuild jobs",
+)
+
+AGGREGATION_RECONCILIATIONS = Counter(
+    "crypto_smc_aggregation_reconciliations_total",
+    "Aggregate comparisons with Bybit REST",
+    labelnames=("timeframe", "result"),
+)
