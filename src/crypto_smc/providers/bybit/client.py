@@ -16,9 +16,10 @@ from crypto_smc.providers.bybit.schemas import (
     BybitInstrument,
     BybitInstrumentResponse,
     BybitKlineResponse,
+    BybitPublicTradeResponse,
     BybitTickerResponse,
 )
-from crypto_smc.providers.models import Candle1m, Instrument, MarketTicker
+from crypto_smc.providers.models import Candle1m, Instrument, MarketTicker, PublicTrade
 
 logger = structlog.get_logger(__name__)
 
@@ -139,6 +140,48 @@ class BybitClient:
             start_time=start_time,
             end_time=end_time,
             limit=limit,
+        )
+
+    async def get_recent_public_trades(
+        self,
+        *,
+        symbol: str,
+        limit: int = 1000,
+    ) -> list[PublicTrade]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("Bybit public trade limit must be between 1 and 1000")
+        normalized_symbol = symbol.upper()
+        payload = await self._get(
+            "/v5/market/recent-trade",
+            params={
+                "category": "linear",
+                "symbol": normalized_symbol,
+                "limit": limit,
+            },
+        )
+        response = BybitPublicTradeResponse.model_validate(payload)
+        if response.retCode != 0:
+            raise BybitAPIError(f"Bybit error {response.retCode}: {response.retMsg}")
+        if response.result.category != "linear":
+            raise BybitAPIError(f"Unexpected category: {response.result.category}")
+        trades = [
+            PublicTrade(
+                trade_id=item.execId,
+                symbol=item.symbol.upper(),
+                price=Decimal(item.price),
+                size=Decimal(item.size),
+                side=item.side,
+                executed_at=datetime.fromtimestamp(int(item.time) / 1000, tz=UTC),
+                sequence=int(item.seq),
+                is_block_trade=item.isBlockTrade,
+                is_rpi_trade=item.isRPITrade,
+            )
+            for item in response.result.list
+            if item.symbol.upper() == normalized_symbol
+        ]
+        return sorted(
+            trades,
+            key=lambda trade: (trade.executed_at, trade.sequence, trade.trade_id),
         )
 
     async def get_klines(

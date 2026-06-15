@@ -81,3 +81,17 @@ class Candle1m(BaseModel):
     close_price: Decimal
     volume: Decimal
     turnover: Decimal
+
+
+class PublicTrade(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    trade_id: str
+    symbol: str
+    price: Decimal
+    size: Decimal
+    side: Literal["Buy", "Sell"]
+    executed_at: datetime
+    sequence: int
+    is_block_trade: bool = False
+    is_rpi_trade: bool = False

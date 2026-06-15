@@ -16,7 +16,7 @@ The policy checks, in order:
 7. Short burst limit.
 
 Allowed signals start as `preparing`. They are not considered publishable to a
-user until M6 trade-stream coverage proves that no trade was missed during the
+user until trade-stream coverage proves that no trade was missed during the
 subscription handshake. Policy rejections are persisted as `suppressed` with
 their reason for auditability.
 
@@ -48,6 +48,47 @@ State transitions lock the signal and virtual trade rows, validate both state
 machines, increment their versions, and append the event in one transaction.
 Repeating the same idempotency key for the same signal is a no-op; reusing it
 for another signal is an error.
+
+## Public-trade coverage
+
+The worker opens a dedicated `publicTrade.{symbol}` WebSocket only while a
+signal for that symbol is being tracked. A stream is considered ready only
+after its first trade has been buffered, not merely after Bybit acknowledges
+the subscription.
+
+For initial activation and reconnect recovery, the worker:
+
+1. Records the coverage anchor before opening the subscription.
+2. Buffers WebSocket trades by Bybit trade ID.
+3. Loads up to 1,000 recent public trades through REST.
+4. Requires REST history to reach the anchor.
+5. Requires at least one identical trade ID in REST and WebSocket data.
+6. Deduplicates the merged data by trade ID and replays it chronologically.
+
+If this proof fails, the system fails closed. A signal waiting for entry becomes
+`coverage_failed`; an already entered position becomes `ambiguous`. Public
+trade checkpoints are stored on the virtual trade so a worker restart resumes
+from the last processed trade instead of duplicating transitions.
+
+## Virtual lifecycle
+
+Every public trade is evaluated in exchange order against the exact signal
+levels. The implemented lifecycle is:
+
+```text
+preparing -> active -> entered -> tp1_reached -> tp2_completed
+                    \-> invalidated
+                              \-> stopped
+                              \-> stopped_at_breakeven
+```
+
+Waiting signals expire after their configured expiration time. TP1 realizes
+half the position and moves the remaining stop to fee-adjusted breakeven.
+Realized PnL, taker fees, remaining quantity, and R multiple are persisted with
+the transition.
+
+Conservative 1m fallback resolution and estimated funding remain to be
+implemented before M6 is complete.
 
 ## Debug API
 

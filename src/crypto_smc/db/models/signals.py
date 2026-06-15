@@ -56,6 +56,11 @@ class SignalRecord(Base):
     take_profit_2: Mapped[Decimal] = mapped_column(Numeric(38, 18))
     quantity: Mapped[Decimal] = mapped_column(Numeric(38, 18))
     risk_amount: Mapped[Decimal] = mapped_column(Numeric(30, 12))
+    taker_fee_rate: Mapped[Decimal] = mapped_column(
+        Numeric(20, 12),
+        default=Decimal("0.00055"),
+        server_default="0.00055",
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -138,6 +143,9 @@ class VirtualTradeRecord(Base):
     )
     ambiguous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     resolution_note: Mapped[str | None] = mapped_column(Text)
+    last_trade_id: Mapped[str | None] = mapped_column(String(128))
+    last_trade_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_trade_sequence: Mapped[int | None] = mapped_column(BigInteger)
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

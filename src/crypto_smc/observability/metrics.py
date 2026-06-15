@@ -98,3 +98,21 @@ STRATEGY_ANALYSIS_RESULTS = Counter(
     "Strategy analysis outcomes",
     labelnames=("result",),
 )
+
+SIGNAL_TRADE_STREAM_EVENTS = Counter(
+    "crypto_smc_signal_trade_stream_events_total",
+    "Bybit public-trade events used for signal lifecycle tracking",
+    labelnames=("outcome",),
+)
+
+SIGNAL_TRADE_STREAM_RECONNECTS = Counter(
+    "crypto_smc_signal_trade_stream_reconnects_total",
+    "Bybit public-trade reconnect attempts",
+    labelnames=("symbol",),
+)
+
+SIGNAL_COVERAGE_RESULTS = Counter(
+    "crypto_smc_signal_coverage_results_total",
+    "Signal public-trade coverage establishment results",
+    labelnames=("result",),
+)

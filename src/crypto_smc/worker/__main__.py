@@ -10,11 +10,16 @@ from crypto_smc.db.repositories.strategy import StrategyRepository
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
-from crypto_smc.providers.bybit import BybitClient, BybitKlineWebSocketManager
+from crypto_smc.providers.bybit import (
+    BybitClient,
+    BybitKlineWebSocketManager,
+    BybitPublicTradeWebSocketManager,
+)
 from crypto_smc.providers.coingecko import CoinGeckoClient
 from crypto_smc.runtime import run_until_stopped
 from crypto_smc.services.universe_refresh import UniverseRefreshService
 from crypto_smc.signals import SignalPolicyConfig
+from crypto_smc.signals.service import SignalLifecycleService
 from crypto_smc.universe import UniversePolicyConfig
 
 
@@ -115,6 +120,23 @@ async def main() -> None:
             )
         ),
     )
+    public_trade_stream = BybitPublicTradeWebSocketManager(
+        url=settings.bybit_ws_url,
+        queue_size=settings.signal_trade_queue_size,
+        buffer_size=settings.signal_trade_buffer_size,
+        heartbeat_seconds=settings.bybit_ws_heartbeat_seconds,
+        reconnect_base_seconds=settings.bybit_ws_reconnect_base_seconds,
+        reconnect_max_seconds=settings.bybit_ws_reconnect_max_seconds,
+        ready_timeout_seconds=settings.bybit_ws_ready_timeout_seconds,
+    )
+    signal_lifecycle = SignalLifecycleService(
+        provider=provider,
+        stream=public_trade_stream,
+        session_factory=session_factory,
+        poll_interval_seconds=settings.signal_trade_poll_interval_seconds,
+        recent_trade_limit=settings.signal_trade_recent_limit,
+        checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
+    )
 
     async def run_worker() -> None:
         await asyncio.gather(
@@ -122,6 +144,7 @@ async def main() -> None:
             aggregation_service.run(),
             aggregation_reconciliation.run(),
             strategy_analysis.run(),
+            signal_lifecycle.run(),
         )
 
     try:

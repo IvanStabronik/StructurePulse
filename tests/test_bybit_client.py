@@ -223,6 +223,67 @@ async def test_get_closed_1m_klines_sorts_reverse_bybit_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_recent_public_trades_normalizes_and_sorts() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["category"] == "linear"
+        assert request.url.params["symbol"] == "BTCUSDT"
+        assert request.url.params["limit"] == "2"
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "category": "linear",
+                    "list": [
+                        {
+                            "execId": "second",
+                            "symbol": "BTCUSDT",
+                            "price": "101",
+                            "size": "2",
+                            "side": "Sell",
+                            "time": "1735689601000",
+                            "isBlockTrade": False,
+                            "isRPITrade": True,
+                            "seq": "11",
+                        },
+                        {
+                            "execId": "first",
+                            "symbol": "BTCUSDT",
+                            "price": "100",
+                            "size": "1",
+                            "side": "Buy",
+                            "time": "1735689600000",
+                            "isBlockTrade": False,
+                            "isRPITrade": False,
+                            "seq": "10",
+                        },
+                    ],
+                },
+                "time": 1735689602000,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitClient(
+        base_url="https://unused.test",
+        timeout_seconds=1,
+        instrument_page_size=1000,
+        http_client=http_client,
+    )
+
+    trades = await client.get_recent_public_trades(symbol="btcusdt", limit=2)
+    await http_client.aclose()
+
+    assert [trade.trade_id for trade in trades] == ["first", "second"]
+    assert trades[0].price == 100
+    assert trades[1].is_rpi_trade is True
+
+
+@pytest.mark.asyncio
 async def test_bybit_client_retries_http_429() -> None:
     attempts = 0
 

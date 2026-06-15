@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     signal_burst_window_minutes: int = Field(default=5, ge=1, le=60)
     signal_burst_maximum: int = Field(default=3, ge=1, le=30)
     signal_pause_on_abnormal_btc: bool = True
+    signal_trade_queue_size: int = Field(default=20_000, ge=100, le=200_000)
+    signal_trade_buffer_size: int = Field(default=5000, ge=1000, le=100_000)
+    signal_trade_recent_limit: int = Field(default=1000, ge=1, le=1000)
+    signal_trade_poll_interval_seconds: float = Field(default=1, ge=0.1, le=30)
+    signal_trade_checkpoint_interval_seconds: float = Field(
+        default=1,
+        ge=0.1,
+        le=60,
+    )
 
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()

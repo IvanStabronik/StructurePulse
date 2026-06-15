@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -131,3 +133,56 @@ class BybitWebSocketKlineMessage(BaseModel):
     type: str
     ts: int
     data: list[BybitWebSocketKline]
+
+
+class BybitPublicTrade(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    execId: str
+    symbol: str
+    price: str
+    size: str
+    side: Literal["Buy", "Sell"]
+    time: str
+    isBlockTrade: bool = False
+    isRPITrade: bool = False
+    seq: str
+
+
+class BybitPublicTradeResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    category: str
+    list: list[BybitPublicTrade]
+
+
+class BybitPublicTradeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    retCode: int
+    retMsg: str
+    result: BybitPublicTradeResult
+    time: int
+
+
+class BybitWebSocketPublicTrade(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    T: int
+    s: str
+    S: Literal["Buy", "Sell"]
+    v: str
+    p: str
+    i: str
+    BT: bool = False
+    RPI: bool = False
+    seq: int
+
+
+class BybitWebSocketPublicTradeMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    topic: str
+    type: str
+    ts: int
+    data: list[BybitWebSocketPublicTrade]

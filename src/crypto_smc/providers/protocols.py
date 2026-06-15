@@ -1,7 +1,13 @@
 from datetime import datetime
 from typing import Protocol
 
-from crypto_smc.providers.models import Candle1m, Instrument, MarketAsset, MarketTicker
+from crypto_smc.providers.models import (
+    Candle1m,
+    Instrument,
+    MarketAsset,
+    MarketTicker,
+    PublicTrade,
+)
 
 
 class InstrumentProvider(Protocol):
@@ -43,5 +49,16 @@ class KlineProvider(Protocol):
         end_time: datetime,
         limit: int,
     ) -> list[Candle1m]: ...
+
+    async def close(self) -> None: ...
+
+
+class PublicTradeProvider(Protocol):
+    async def get_recent_public_trades(
+        self,
+        *,
+        symbol: str,
+        limit: int,
+    ) -> list[PublicTrade]: ...
 
     async def close(self) -> None: ...

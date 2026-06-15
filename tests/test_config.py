@@ -22,3 +22,5 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.signal_burst_window_minutes == 5
     assert settings.signal_burst_maximum == 3
     assert settings.signal_pause_on_abnormal_btc is True
+    assert settings.signal_trade_recent_limit == 1000
+    assert settings.signal_trade_checkpoint_interval_seconds == 1

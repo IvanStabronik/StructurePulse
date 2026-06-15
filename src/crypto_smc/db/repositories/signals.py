@@ -71,6 +71,34 @@ class SignalView:
     ambiguous: bool | None
 
 
+@dataclass(frozen=True, slots=True)
+class TrackingSignalView:
+    id: int
+    symbol: str
+    direction: str
+    status: str
+    entry_lower: Decimal
+    entry_upper: Decimal
+    planned_entry: Decimal
+    stop_loss: Decimal
+    take_profit_1: Decimal
+    take_profit_2: Decimal
+    quantity: Decimal
+    risk_amount: Decimal
+    taker_fee_rate: Decimal
+    expires_at: datetime
+    created_at: datetime
+    current_stop: Decimal
+    remaining_quantity: Decimal
+    last_trade_id: str | None
+    last_trade_time: datetime | None
+    last_trade_sequence: int | None
+
+    @property
+    def coverage_anchor(self) -> datetime:
+        return self.last_trade_time or self.created_at
+
+
 class SignalRepository:
     async def publish_candidates(
         self,
@@ -171,6 +199,48 @@ class SignalRepository:
             ).all()
         return tuple(signal_ids)
 
+    async def list_tracking_signals(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> tuple[TrackingSignalView, ...]:
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SignalRecord, VirtualTradeRecord)
+                    .join(
+                        VirtualTradeRecord,
+                        VirtualTradeRecord.signal_id == SignalRecord.id,
+                    )
+                    .where(SignalRecord.status.in_(ACTIVE_SIGNAL_STATUSES))
+                    .order_by(SignalRecord.created_at, SignalRecord.id)
+                )
+            ).all()
+        return tuple(
+            TrackingSignalView(
+                id=signal.id,
+                symbol=signal.symbol,
+                direction=signal.direction,
+                status=signal.status,
+                entry_lower=signal.entry_lower,
+                entry_upper=signal.entry_upper,
+                planned_entry=signal.planned_entry,
+                stop_loss=signal.stop_loss,
+                take_profit_1=signal.take_profit_1,
+                take_profit_2=signal.take_profit_2,
+                quantity=signal.quantity,
+                risk_amount=signal.risk_amount,
+                taker_fee_rate=signal.taker_fee_rate,
+                expires_at=signal.expires_at,
+                created_at=signal.created_at,
+                current_stop=trade.current_stop,
+                remaining_quantity=trade.remaining_quantity,
+                last_trade_id=trade.last_trade_id,
+                last_trade_time=trade.last_trade_time,
+                last_trade_sequence=trade.last_trade_sequence,
+            )
+            for signal, trade in rows
+        )
+
     async def list_signals(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -234,6 +304,8 @@ class SignalRepository:
         r_multiple: Decimal | None = None,
         ambiguous: bool | None = None,
         resolution_note: str | None = None,
+        current_stop: Decimal | None = None,
+        remaining_quantity: Decimal | None = None,
     ) -> SignalTransitionResult:
         async with session_factory() as session, session.begin():
             duplicate = await session.scalar(
@@ -293,6 +365,10 @@ class SignalRepository:
                 trade.ambiguous = ambiguous
             if resolution_note is not None:
                 trade.resolution_note = resolution_note
+            if current_stop is not None:
+                trade.current_stop = current_stop
+            if remaining_quantity is not None:
+                trade.remaining_quantity = remaining_quantity
             session.add(
                 SignalEventRecord(
                     signal_id=signal_id,
@@ -306,6 +382,37 @@ class SignalRepository:
                 )
             )
         return SignalTransitionResult(True, signal_id, next_status)
+
+    async def checkpoint_trade(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        signal_id: int,
+        trade_id: str,
+        executed_at: datetime,
+        sequence: int,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            trade = await session.scalar(
+                select(VirtualTradeRecord)
+                .where(VirtualTradeRecord.signal_id == signal_id)
+                .with_for_update()
+            )
+            if trade is None:
+                raise ValueError(f"Signal {signal_id} has no virtual trade")
+            if trade.last_trade_time is not None and (
+                executed_at,
+                sequence,
+                trade_id,
+            ) <= (
+                trade.last_trade_time,
+                trade.last_trade_sequence or 0,
+                trade.last_trade_id or "",
+            ):
+                return
+            trade.last_trade_id = trade_id
+            trade.last_trade_time = executed_at
+            trade.last_trade_sequence = sequence
 
     @staticmethod
     def _signal_record(
@@ -341,6 +448,13 @@ class SignalRepository:
             take_profit_2=candidate.take_profit_2,
             quantity=candidate.quantity,
             risk_amount=candidate.risk_amount,
+            taker_fee_rate=(
+                candidate.estimated_entry_fee / candidate.notional
+                if candidate.estimated_entry_fee is not None
+                and candidate.notional is not None
+                and candidate.notional > 0
+                else Decimal("0.00055")
+            ),
             expires_at=candidate.expires_at,
             created_at=now,
             updated_at=now,

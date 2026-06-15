@@ -237,11 +237,12 @@ Acceptance:
 
 Goal: publish unique signals and track virtual outcomes accurately.
 
-Status: in progress. M6-01 through M6-05 were completed on 2026-06-15. Signal,
-event, and virtual-trade persistence is atomic with candidate creation;
-transition idempotency, one-active-per-symbol, cooldown, rolling portfolio and
-burst limits, and the abnormal-BTC circuit breaker are implemented. Trade
-stream coverage and live lifecycle tracking remain in M6-06 through M6-14.
+Status: in progress. M6-01 through M6-11 and M6-14 were completed on
+2026-06-15. Signal publication is atomic; public trades use dynamic
+subscriptions with REST overlap proof, identity-based merge, fail-closed
+coverage handling, exact trade-by-trade lifecycle transitions, durable
+checkpoints, and restart recovery. M6-12 remains open. M6-13 includes realized
+PnL, taker fees, and R multiple; estimated funding remains open.
 
 Tasks:
 
