@@ -13,6 +13,8 @@ dealing ranges. The worker composes closed 4H/1H/15m/5m analyses into
 auditable LONG and SHORT candidates with scoring, fee-aware risk sizing, and
 suppression reasons. A deterministic offline replay command can run the same
 analysis over historical 1m CSV data and produce auditable JSON/CSV reports.
+Accepted candidates pass durable duplicate, cooldown, portfolio, burst, and
+BTC circuit-breaker checks before entering the signal lifecycle.
 Telegram signal delivery is not implemented yet.
 
 ## Requirements
@@ -42,6 +44,7 @@ Open:
 - Debug instruments: `http://localhost:8000/debug/instruments`
 - Debug candidates: `http://localhost:8000/debug/candidates`
 - Debug accepted plans: `http://localhost:8000/debug/signals`
+- Debug lifecycle signals: `http://localhost:8000/debug/lifecycle-signals`
 
 Debug routes exist only when `DEBUG_API_ENABLED=true`.
 

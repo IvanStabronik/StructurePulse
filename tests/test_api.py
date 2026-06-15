@@ -6,6 +6,7 @@ import pytest
 
 from crypto_smc.api.main import create_app
 from crypto_smc.config import Settings
+from crypto_smc.db.repositories.signals import SignalFilters, SignalView
 from crypto_smc.db.repositories.strategy import CandidateFilters, CandidateView
 from crypto_smc.providers.models import Instrument
 from tests.test_bybit_client import instrument_payload
@@ -92,6 +93,38 @@ class FakeStrategyRepository:
         ]
 
 
+class FakeSignalRepository:
+    def __init__(self) -> None:
+        self.filters: SignalFilters | None = None
+
+    async def list_signals(self, _: object, *, filters: SignalFilters) -> list[SignalView]:
+        self.filters = filters
+        return [
+            SignalView(
+                id=3,
+                candidate_id=1,
+                symbol="BTCUSDT",
+                direction="long",
+                status="preparing",
+                suppression_reason=None,
+                entry_lower=Decimal(100),
+                entry_upper=Decimal(101),
+                planned_entry=Decimal("100.5"),
+                stop_loss=Decimal(98),
+                take_profit_1=Decimal(104),
+                take_profit_2=Decimal(110),
+                quantity=Decimal(40),
+                risk_amount=Decimal(100),
+                expires_at=datetime(2026, 6, 15, 11, 30, tzinfo=UTC),
+                created_at=datetime(2026, 6, 15, 10, tzinfo=UTC),
+                trade_status="waiting_entry",
+                realized_pnl=Decimal(0),
+                r_multiple=Decimal(0),
+                ambiguous=False,
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_debug_endpoint_is_disabled_by_default() -> None:
     app = create_app(
@@ -161,5 +194,33 @@ async def test_debug_signals_forces_accepted_status_and_passes_filters() -> None
         strategy_version="smc-v1.0.0",
         created_from=None,
         created_to=None,
+        limit=100,
+    )
+
+
+@pytest.mark.asyncio
+async def test_debug_lifecycle_signals_exposes_tracking_state() -> None:
+    repository = FakeSignalRepository()
+    app = create_app(
+        Settings(app_env="test", debug_api_enabled=True),
+        instrument_provider=FakeInstrumentProvider(),
+        engine=FakeEngine(),  # type: ignore[arg-type]
+        signal_repository=repository,  # type: ignore[arg-type]
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/debug/lifecycle-signals",
+            params={"symbol": "btcusdt", "status": "preparing"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["trade_status"] == "waiting_entry"
+    assert repository.filters == SignalFilters(
+        symbol="btcusdt",
+        status="preparing",
         limit=100,
     )

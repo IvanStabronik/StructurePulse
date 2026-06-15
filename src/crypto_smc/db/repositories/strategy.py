@@ -17,6 +17,8 @@ from crypto_smc.db.models import (
     UniverseMemberRecord,
     UniverseSnapshotRecord,
 )
+from crypto_smc.db.repositories.signals import SignalRepository
+from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.strategy import SignalCandidate, StrategyConfig, StrategyInput
 from crypto_smc.strategy.serialization import json_safe
 from smc_core import Candle, Timeframe
@@ -79,6 +81,15 @@ class StrategySymbolProfile:
 
 
 class StrategyRepository:
+    def __init__(
+        self,
+        *,
+        signal_repository: SignalRepository | None = None,
+        signal_policy: SignalPolicyConfig | None = None,
+    ) -> None:
+        self._signal_repository = signal_repository or SignalRepository()
+        self._signal_policy = signal_policy or SignalPolicyConfig()
+
     async def list_active_profiles(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -199,15 +210,20 @@ class StrategyRepository:
             session.add(snapshot)
             await session.flush()
 
-            session.add_all(
-                [
-                    self._candidate_record(
-                        candidate,
-                        snapshot_id=snapshot.id,
-                        strategy_version_id=version.id,
-                    )
-                    for candidate in candidates
-                ]
+            candidate_records = [
+                self._candidate_record(
+                    candidate,
+                    snapshot_id=snapshot.id,
+                    strategy_version_id=version.id,
+                )
+                for candidate in candidates
+            ]
+            session.add_all(candidate_records)
+            await session.flush()
+            await self._signal_repository.publish_candidates(
+                session,
+                candidates=tuple(zip(candidate_records, candidates, strict=True)),
+                config=self._signal_policy,
             )
         return snapshot.id, True
 

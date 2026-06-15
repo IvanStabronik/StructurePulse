@@ -6,6 +6,7 @@ from crypto_smc.aggregation.reconciliation import AggregationReconciliationServi
 from crypto_smc.aggregation.service import AggregationService
 from crypto_smc.analysis import AnalysisProcessPool, StrategyAnalysisService
 from crypto_smc.config import get_settings
+from crypto_smc.db.repositories.strategy import StrategyRepository
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
@@ -13,6 +14,7 @@ from crypto_smc.providers.bybit import BybitClient, BybitKlineWebSocketManager
 from crypto_smc.providers.coingecko import CoinGeckoClient
 from crypto_smc.runtime import run_until_stopped
 from crypto_smc.services.universe_refresh import UniverseRefreshService
+from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.universe import UniversePolicyConfig
 
 
@@ -102,6 +104,16 @@ async def main() -> None:
         history_candles=settings.strategy_history_candles,
         minimum_history_candles=settings.strategy_minimum_history_candles,
         readiness_event=market_data_ready,
+        repository=StrategyRepository(
+            signal_policy=SignalPolicyConfig(
+                cooldown_minutes=settings.signal_cooldown_minutes,
+                maximum_active_signals=settings.signal_maximum_active,
+                maximum_signals_per_hour=settings.signal_maximum_per_hour,
+                burst_window_minutes=settings.signal_burst_window_minutes,
+                burst_maximum_signals=settings.signal_burst_maximum,
+                pause_on_abnormal_btc=settings.signal_pause_on_abnormal_btc,
+            )
+        ),
     )
 
     async def run_worker() -> None:

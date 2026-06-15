@@ -7,6 +7,11 @@ from crypto_smc.db.models.market_data import (
     DataCheckpointRecord,
     DataGapRecord,
 )
+from crypto_smc.db.models.signals import (
+    SignalEventRecord,
+    SignalRecord,
+    VirtualTradeRecord,
+)
 from crypto_smc.db.models.strategy import (
     AnalysisSnapshotRecord,
     SignalCandidateRecord,
@@ -24,7 +29,10 @@ __all__ = [
     "DataGapRecord",
     "InstrumentRecord",
     "SignalCandidateRecord",
+    "SignalEventRecord",
+    "SignalRecord",
     "StrategyVersionRecord",
     "UniverseMemberRecord",
     "UniverseSnapshotRecord",
+    "VirtualTradeRecord",
 ]

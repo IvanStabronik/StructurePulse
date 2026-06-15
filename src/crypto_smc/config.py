@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     strategy_process_workers: int = Field(default=2, ge=1, le=16)
     strategy_max_pending_batches: int = Field(default=1, ge=1, le=20)
 
+    signal_cooldown_minutes: int = Field(default=60, ge=0, le=1440)
+    signal_maximum_active: int = Field(default=5, ge=1, le=30)
+    signal_maximum_per_hour: int = Field(default=10, ge=1, le=100)
+    signal_burst_window_minutes: int = Field(default=5, ge=1, le=60)
+    signal_burst_maximum: int = Field(default=3, ge=1, le=30)
+    signal_pause_on_abnormal_btc: bool = True
+
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()
 

@@ -237,6 +237,12 @@ Acceptance:
 
 Goal: publish unique signals and track virtual outcomes accurately.
 
+Status: in progress. M6-01 through M6-05 were completed on 2026-06-15. Signal,
+event, and virtual-trade persistence is atomic with candidate creation;
+transition idempotency, one-active-per-symbol, cooldown, rolling portfolio and
+burst limits, and the abnormal-BTC circuit breaker are implemented. Trade
+stream coverage and live lifecycle tracking remain in M6-06 through M6-14.
+
 Tasks:
 
 - `M6-01` Create signal, signal event, and virtual trade tables.

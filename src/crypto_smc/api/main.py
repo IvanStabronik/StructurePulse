@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from crypto_smc.config import Settings, get_settings
 from crypto_smc.db.repositories.aggregation import AggregationRepository
 from crypto_smc.db.repositories.market_data import MarketDataRepository
+from crypto_smc.db.repositories.signals import (
+    SignalFilters,
+    SignalRepository,
+)
 from crypto_smc.db.repositories.strategy import CandidateFilters, StrategyRepository
 from crypto_smc.db.repositories.universe import UniverseRepository
 from crypto_smc.db.session import create_engine, create_session_factory, database_is_ready
@@ -30,6 +34,7 @@ def create_app(
     instrument_provider: InstrumentProvider | None = None,
     engine: AsyncEngine | None = None,
     strategy_repository: StrategyRepository | None = None,
+    signal_repository: SignalRepository | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
@@ -44,6 +49,7 @@ def create_app(
     market_data_repository = MarketDataRepository()
     aggregation_repository = AggregationRepository()
     candidate_repository = strategy_repository or StrategyRepository()
+    lifecycle_repository = signal_repository or SignalRepository()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -214,6 +220,25 @@ def create_app(
             return {
                 "count": len(candidates),
                 "items": [json_safe(asdict(candidate)) for candidate in candidates],
+            }
+
+        @app.get("/debug/lifecycle-signals", tags=["debug"])
+        async def debug_lifecycle_signals(
+            symbol: str | None = None,
+            signal_status: str | None = Query(default=None, alias="status"),
+            limit: int = Query(default=100, ge=1, le=500),
+        ) -> dict[str, object]:
+            signals = await lifecycle_repository.list_signals(
+                session_factory,
+                filters=SignalFilters(
+                    symbol=symbol,
+                    status=signal_status,
+                    limit=limit,
+                ),
+            )
+            return {
+                "count": len(signals),
+                "items": [json_safe(asdict(signal)) for signal in signals],
             }
 
     return app
