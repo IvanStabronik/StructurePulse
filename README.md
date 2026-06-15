@@ -11,7 +11,9 @@ The pure synchronous `smc_core` package detects deterministic swings,
 structure breaks, liquidity events, displacement, FVGs, Order Blocks, and
 dealing ranges. The worker composes closed 4H/1H/15m/5m analyses into
 auditable LONG and SHORT candidates with scoring, fee-aware risk sizing, and
-suppression reasons. Telegram signal delivery is not implemented yet.
+suppression reasons. A deterministic offline replay command can run the same
+analysis over historical 1m CSV data and produce auditable JSON/CSV reports.
+Telegram signal delivery is not implemented yet.
 
 ## Requirements
 
@@ -42,6 +44,18 @@ Open:
 - Debug accepted plans: `http://localhost:8000/debug/signals`
 
 Debug routes exist only when `DEBUG_API_ENABLED=true`.
+
+## Offline replay
+
+```powershell
+docker compose run --rm --volume "${PWD}\data:/app/data" api `
+  python -m crypto_smc.replay `
+  --input /app/data/history.csv `
+  --output-dir /app/data/replay-output
+```
+
+The CSV contract, chronology rules, conservative virtual outcomes, and report
+fields are documented in `docs/replay.md`.
 
 ## Quality checks
 
