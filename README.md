@@ -50,6 +50,8 @@ Open:
 - Debug candidates: `http://localhost:8000/debug/candidates`
 - Debug accepted plans: `http://localhost:8000/debug/signals`
 - Debug lifecycle signals: `http://localhost:8000/debug/lifecycle-signals`
+- Active evaluation window: `http://localhost:8000/observation/current`
+- Live evaluation report: `http://localhost:8000/observation/report`
 
 Debug routes exist only when `DEBUG_API_ENABLED=true`.
 
@@ -84,6 +86,29 @@ docker run --rm crypto-smc-api python scripts/smoke_test.py `
 
 Backup, restore, outage drills, graceful shutdown, readiness semantics, and
 retention are documented in `docs/operations.md`.
+
+## Live observation
+
+Start a strategy-frozen evaluation window:
+
+```powershell
+docker compose run --rm api python -m crypto_smc.observation start `
+  --name live-2026-06 `
+  --strategy-version smc-v1.0.0
+```
+
+Build a reproducible JSON report:
+
+```powershell
+docker compose run --rm --volume "${PWD}/data:/app/data" api `
+  python -m crypto_smc.observation report `
+  --output /app/data/live-report.json
+```
+
+The report groups results by symbol, direction, score band, and UTC trading
+session. It includes costs, ambiguity, drawdown, suppressions, data-quality
+failures, and a readiness verdict that remains `insufficient_sample` until at
+least 100 virtual signals are complete.
 
 ## Quality checks
 

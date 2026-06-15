@@ -150,7 +150,7 @@ async def test_readiness_rejects_outdated_database_schema(
         return True
 
     async def outdated_schema(_: object, *, required_revision: str) -> bool:
-        assert required_revision == "0009"
+        assert required_revision == "0010"
         return False
 
     monkeypatch.setattr("crypto_smc.api.main.database_is_ready", ready_database)

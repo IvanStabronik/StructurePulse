@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from crypto_smc.db.models import (
     AggregatedCandleRecord,
     AnalysisSnapshotRecord,
+    EvaluationWindowRecord,
     InstrumentRecord,
     SignalCandidateRecord,
     StrategyVersionRecord,
@@ -274,6 +275,19 @@ class StrategyRepository:
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
+        frozen_version = await session.scalar(
+            select(StrategyVersionRecord.version)
+            .join(
+                EvaluationWindowRecord,
+                EvaluationWindowRecord.strategy_version_id == StrategyVersionRecord.id,
+            )
+            .where(EvaluationWindowRecord.status == "active")
+        )
+        if frozen_version is not None and frozen_version != config.version:
+            raise ValueError(
+                f"Strategy version is frozen at {frozen_version} by the active evaluation window"
+            )
+
         existing = await session.scalar(
             select(StrategyVersionRecord).where(StrategyVersionRecord.version == config.version)
         )
@@ -282,6 +296,13 @@ class StrategyRepository:
                 raise ValueError(
                     f"Strategy version {config.version} already has different parameters"
                 )
+            if not existing.is_active:
+                await session.execute(
+                    update(StrategyVersionRecord)
+                    .where(StrategyVersionRecord.is_active.is_(True))
+                    .values(is_active=False)
+                )
+                existing.is_active = True
             return existing
 
         await session.execute(

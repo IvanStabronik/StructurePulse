@@ -3,7 +3,7 @@
 ## Health model
 
 - API `/health/live` proves the HTTP process is responsive.
-- API `/health/ready` requires PostgreSQL and Alembic revision `0009`.
+- API `/health/ready` requires PostgreSQL and Alembic revision `0010`.
 - Worker `/health/live` proves its event loop is responsive.
 - Worker `/health/ready` additionally requires PostgreSQL, the expected schema,
   complete market-data recovery, and a non-quiescing runtime.
