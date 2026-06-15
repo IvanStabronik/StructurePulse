@@ -1,0 +1,77 @@
+name: crypto-smc
+
+x-app: &app
+  build:
+    context: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+asyncpg://crypto_smc:crypto_smc@postgres:5432/crypto_smc
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: crypto_smc
+      POSTGRES_USER: crypto_smc
+      POSTGRES_PASSWORD: crypto_smc
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto_smc -d crypto_smc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *app
+    command:
+      ["uvicorn", "crypto_smc.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "crypto_smc.worker"]
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  telegram:
+    <<: *app
+    command: ["python", "-m", "crypto_smc.telegram"]
+
+volumes:
+  postgres-data:

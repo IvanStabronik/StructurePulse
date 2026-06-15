@@ -1,0 +1,298 @@
+from dataclasses import replace
+from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
+from typing import Any, cast
+
+import pytest
+
+from crypto_smc.db.models import NotificationOutboxRecord, TelegramUserSettingsRecord
+from crypto_smc.db.repositories.notifications import (
+    PendingDelivery,
+    TelegramUserSettings,
+    delivery_policy,
+    notification_window_is_open,
+)
+from crypto_smc.telegram.commands import (
+    ActiveSignal,
+    CoinAnalysis,
+    PerformanceStats,
+    ServiceStatus,
+    TelegramCommandService,
+)
+from crypto_smc.telegram.outbox import (
+    NotificationOutboxService,
+    RetryableDeliveryError,
+    UnknownDeliveryOutcome,
+)
+from crypto_smc.telegram.rendering import render_notification
+
+NOW = datetime(2026, 6, 15, 10, tzinfo=UTC)
+
+
+def settings(*, language: str = "ru", paused: bool = False) -> TelegramUserSettings:
+    return TelegramUserSettings(
+        user_id=42,
+        language=language,
+        minimum_score=70,
+        schedule_timezone="Europe/Warsaw",
+        schedule_start=time(7),
+        schedule_end=time(20),
+        risk_percent=Decimal(1),
+        reference_balance=Decimal(10_000),
+        paused=paused,
+    )
+
+
+def delivery() -> PendingDelivery:
+    return PendingDelivery(
+        delivery_id=1,
+        outbox_id=2,
+        user_id=42,
+        event_type="new_signal",
+        payload={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "score": 90,
+            "entry_lower": "100",
+            "entry_upper": "101",
+            "stop_loss": "98",
+            "take_profit_1": "104",
+            "take_profit_2": "110",
+            "risk_amount": "100",
+        },
+        language="ru",
+        attempts=1,
+    )
+
+
+def test_warsaw_schedule_and_delivery_filters_are_deterministic() -> None:
+    assert notification_window_is_open(
+        NOW,
+        timezone="Europe/Warsaw",
+        start=time(7),
+        end=time(20),
+    )
+    assert not notification_window_is_open(
+        datetime(2026, 6, 15, 3, tzinfo=UTC),
+        timezone="Europe/Warsaw",
+        start=time(7),
+        end=time(20),
+    )
+
+    outbox = NotificationOutboxRecord(
+        idempotency_key="signal:1",
+        event_type="new_signal",
+        payload={"score": 90},
+    )
+    user = TelegramUserSettingsRecord(
+        user_id=42,
+        language="ru",
+        minimum_score=95,
+        schedule_timezone="Europe/Warsaw",
+        schedule_start=time(7),
+        schedule_end=time(20),
+        paused=False,
+    )
+    assert delivery_policy(outbox, user, now=NOW) == (
+        "skipped",
+        "below_score_threshold",
+    )
+    outbox.event_type = "signal_result"
+    assert delivery_policy(outbox, user, now=NOW) == ("pending", None)
+
+
+def test_notifications_render_in_russian_and_english() -> None:
+    payload = delivery().payload
+    russian = render_notification("new_signal", payload, "ru")
+    english = render_notification("new_signal", payload, "en")
+
+    assert "НОВЫЙ СИГНАЛ" in russian
+    assert "ЛОНГ" in russian
+    assert "NEW SIGNAL" in english
+    assert "LONG" in english
+
+
+class FakeOutboxRepository:
+    def __init__(self, pending: PendingDelivery) -> None:
+        self.pending = pending
+        self.available = True
+        self.sent: list[int] = []
+        self.retries: list[timedelta] = []
+        self.failed: list[bool] = []
+
+    async def recover_stale_sending(self, _: object) -> int:
+        return 0
+
+    async def materialize_pending(self, _: object, **__: object) -> int:
+        return 0
+
+    async def claim_delivery(self, _: object, **__: object) -> PendingDelivery | None:
+        if not self.available:
+            return None
+        self.available = False
+        return self.pending
+
+    async def mark_retry(self, _: object, **kwargs: object) -> None:
+        self.retries.append(kwargs["retry_after"])  # type: ignore[arg-type]
+        self.pending = replace(self.pending, attempts=self.pending.attempts + 1)
+        self.available = True
+
+    async def mark_sent(self, _: object, **kwargs: object) -> None:
+        message_id = kwargs["message_id"]
+        assert isinstance(message_id, int)
+        self.sent.append(message_id)
+
+    async def mark_failed(self, _: object, **kwargs: object) -> None:
+        self.failed.append(bool(kwargs["outcome_unknown"]))
+
+
+class RetryThenSend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def send(self, user_id: int, text: str) -> int:
+        assert user_id == 42
+        assert text
+        self.calls += 1
+        if self.calls == 1:
+            raise RetryableDeliveryError("rate limited", retry_after_seconds=1)
+        return 777
+
+
+class UnknownSender:
+    async def send(self, user_id: int, text: str) -> int:
+        raise UnknownDeliveryOutcome("timeout after request")
+
+
+@pytest.mark.asyncio
+async def test_outbox_retries_known_failure_and_sends_once() -> None:
+    repository = FakeOutboxRepository(delivery())
+    sender = RetryThenSend()
+    service = NotificationOutboxService(
+        session_factory=object(),  # type: ignore[arg-type]
+        sender=sender,
+        user_ids=(42,),
+        poll_seconds=1,
+        batch_size=20,
+        max_attempts=5,
+        retry_base_seconds=2,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service.run_once()
+    await service.run_once()
+    await service.run_once()
+
+    assert sender.calls == 2
+    assert repository.sent == [777]
+    assert repository.retries == [timedelta(seconds=2)]
+
+
+@pytest.mark.asyncio
+async def test_unknown_delivery_outcome_is_never_retried() -> None:
+    repository = FakeOutboxRepository(delivery())
+    service = NotificationOutboxService(
+        session_factory=object(),  # type: ignore[arg-type]
+        sender=UnknownSender(),
+        user_ids=(42,),
+        poll_seconds=1,
+        batch_size=20,
+        max_attempts=5,
+        retry_base_seconds=2,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service.run_once()
+    await service.run_once()
+
+    assert repository.failed == [True]
+
+
+class FakeSettingsRepository:
+    def __init__(self, current: TelegramUserSettings | None) -> None:
+        self.current = current
+
+    async def get_user(self, _: object, user_id: int) -> TelegramUserSettings | None:
+        return self.current if self.current and self.current.user_id == user_id else None
+
+    async def update_user(
+        self,
+        _: object,
+        user_id: int,
+        **values: object,
+    ) -> TelegramUserSettings:
+        assert self.current is not None and self.current.user_id == user_id
+        replace_settings = cast(Any, replace)
+        self.current = replace_settings(self.current, **values)
+        return self.current
+
+
+class FakeQueries:
+    async def active_signals(self, _: object) -> tuple[ActiveSignal, ...]:
+        return (
+            ActiveSignal(
+                symbol="BTCUSDT",
+                direction="long",
+                status="active",
+                score=90,
+                entry_lower=Decimal(100),
+                entry_upper=Decimal(101),
+                stop_loss=Decimal(98),
+                take_profit_1=Decimal(104),
+                take_profit_2=Decimal(110),
+            ),
+        )
+
+    async def latest_coin(self, _: object, symbol: str) -> CoinAnalysis | None:
+        return CoinAnalysis(
+            symbol=symbol,
+            direction="long",
+            status="accepted",
+            score=90,
+            strength="strong",
+            evidence=("bullish_context",),
+            suppression_reasons=(),
+        )
+
+    async def stats(self, _: object) -> PerformanceStats:
+        return PerformanceStats(10, 6, 1, Decimal("250.5"), Decimal("0.4"))
+
+    async def status(self, _: object) -> ServiceStatus:
+        return ServiceStatus(30, 0, 1, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_commands_support_localization_and_settings_updates() -> None:
+    settings_repository = FakeSettingsRepository(settings())
+    service = TelegramCommandService(
+        session_factory=object(),  # type: ignore[arg-type]
+        settings_repository=settings_repository,  # type: ignore[arg-type]
+        query_repository=FakeQueries(),  # type: ignore[arg-type]
+    )
+
+    signals = await service.handle(42, "/signals")
+    coin = await service.handle(42, "/coin btc")
+    changed = await service.handle(42, "/language en")
+    schedule = await service.handle(42, "/schedule 08:00 19:30 Europe/Warsaw")
+    risk = await service.handle(42, "/risk 1.5 12000")
+    paused = await service.handle(42, "/pause")
+
+    assert "Активный сигнал" in signals
+    assert "BTCUSDT" in coin
+    assert "Language: en" in changed
+    assert "08:00-19:30" in schedule
+    assert "1.5%" in risk
+    assert paused == "Notifications paused."
+    assert settings_repository.current is not None
+    assert settings_repository.current.paused is True
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_user_receives_no_private_response() -> None:
+    service = TelegramCommandService(
+        session_factory=object(),  # type: ignore[arg-type]
+        settings_repository=FakeSettingsRepository(None),  # type: ignore[arg-type]
+        query_repository=FakeQueries(),  # type: ignore[arg-type]
+    )
+
+    assert await service.handle(999, "/signals") == ""

@@ -1,0 +1,141 @@
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+
+def render_notification(
+    event_type: str,
+    payload: dict[str, object],
+    language: str,
+) -> str:
+    symbol = str(payload.get("symbol", "?"))
+    direction = _direction(str(payload.get("direction", "?")), language)
+    status = _status(str(payload.get("status", "?")), language)
+    if event_type in {"service_warning", "service_recovered"}:
+        recovered = event_type == "service_recovered"
+        title = (
+            ("СЕРВИС ВОССТАНОВЛЕН" if recovered else "СЕРВИС ДЕГРАДИРОВАН")
+            if language == "ru"
+            else ("SERVICE RECOVERED" if recovered else "SERVICE DEGRADED")
+        )
+        service_label = "Сервис" if language == "ru" else "Service"
+        status_label = "Статус" if language == "ru" else "Status"
+        reason_label = "Причина" if language == "ru" else "Reason"
+        return "\n".join(
+            (
+                title,
+                f"{service_label}: {payload.get('service', '?')}",
+                f"{status_label}: {status}",
+                f"{reason_label}: {payload.get('reason', '?')}",
+            )
+        )
+    if event_type == "new_signal":
+        title = "НОВЫЙ СИГНАЛ" if language == "ru" else "NEW SIGNAL"
+        labels = (
+            ("Оценка", "Вход", "Стоп", "Риск")
+            if language == "ru"
+            else ("Score", "Entry", "Stop", "Risk")
+        )
+        return "\n".join(
+            (
+                f"{title}: {symbol} {direction}",
+                f"{labels[0]}: {payload.get('score', '?')}/100",
+                (
+                    f"{labels[1]}: {_number(payload.get('entry_lower'))}"
+                    f"-{_number(payload.get('entry_upper'))}"
+                ),
+                f"{labels[2]}: {_number(payload.get('stop_loss'))}",
+                f"TP1: {_number(payload.get('take_profit_1'))}",
+                f"TP2: {_number(payload.get('take_profit_2'))}",
+                f"{labels[3]}: {_number(payload.get('risk_amount'))} USDT",
+            )
+        )
+    if event_type == "entry_filled":
+        title = "ВХОД АКТИВИРОВАН" if language == "ru" else "ENTRY FILLED"
+        entry = "Вход" if language == "ru" else "Entry"
+        return f"{title}: {symbol} {direction}\n{entry}: {_number(payload.get('planned_entry'))}"
+    if event_type == "take_profit_1":
+        title = "TP1 ДОСТИГНУТ" if language == "ru" else "TP1 REACHED"
+        stop = "Стоп" if language == "ru" else "Stop"
+        return f"{title}: {symbol}\n{stop}: BE\nPnL: {_number(payload.get('realized_pnl'))} USDT"
+    if event_type == "signal_warning":
+        title = "ПРЕДУПРЕЖДЕНИЕ" if language == "ru" else "WARNING"
+        status_label = "Статус" if language == "ru" else "Status"
+        return f"{title}: {symbol}\n{status_label}: {status}"
+    if event_type in {"signal_expired", "signal_invalidated"}:
+        title = "СИГНАЛ ЗАКРЫТ" if language == "ru" else "SIGNAL CLOSED"
+        status_label = "Статус" if language == "ru" else "Status"
+        return f"{title}: {symbol}\n{status_label}: {status}"
+    title = "РЕЗУЛЬТАТ" if language == "ru" else "RESULT"
+    result_labels = (
+        ("Статус", "Комиссии", "Фандинг") if language == "ru" else ("Status", "Fees", "Funding")
+    )
+    return "\n".join(
+        (
+            f"{title}: {symbol} {direction}",
+            f"{result_labels[0]}: {status}",
+            f"PnL: {_number(payload.get('realized_pnl'))} USDT",
+            f"R: {_number(payload.get('r_multiple'))}",
+            f"{result_labels[1]}: {_number(payload.get('fees'))} USDT",
+            f"{result_labels[2]}: {_number(payload.get('estimated_funding'))} USDT",
+        )
+    )
+
+
+def render_settings(settings: Any, language: str) -> str:
+    paused = (
+        ("да" if settings.paused else "нет")
+        if language == "ru"
+        else ("yes" if settings.paused else "no")
+    )
+    labels = (
+        ("Язык", "Мин. score", "Расписание", "Риск", "Баланс", "Пауза")
+        if language == "ru"
+        else ("Language", "Min score", "Schedule", "Risk", "Balance", "Paused")
+    )
+    return "\n".join(
+        (
+            f"{labels[0]}: {settings.language}",
+            f"{labels[1]}: {settings.minimum_score}",
+            (
+                f"{labels[2]}: {settings.schedule_start:%H:%M}-"
+                f"{settings.schedule_end:%H:%M} {settings.schedule_timezone}"
+            ),
+            f"{labels[3]}: {_number(settings.risk_percent)}%",
+            f"{labels[4]}: {_number(settings.reference_balance)} USDT",
+            f"{labels[5]}: {paused}",
+        )
+    )
+
+
+def _number(value: object) -> str:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return str(value)
+    normalized = number.quantize(Decimal("0.0001")).normalize()
+    return format(normalized, "f")
+
+
+def _direction(direction: str, language: str) -> str:
+    if language == "ru":
+        return {"long": "ЛОНГ", "short": "ШОРТ"}.get(direction, direction.upper())
+    return direction.upper()
+
+
+def _status(status: str, language: str) -> str:
+    if language != "ru":
+        return status
+    return {
+        "active": "активен",
+        "entered": "в позиции",
+        "tp1_reached": "TP1",
+        "stopped": "стоп",
+        "stopped_at_breakeven": "безубыток",
+        "tp2_completed": "TP2",
+        "ambiguous": "неоднозначно",
+        "coverage_failed": "нет надёжного покрытия",
+        "expired": "истёк",
+        "invalidated": "инвалидирован",
+        "degraded": "деградирован",
+        "ready": "готов",
+    }.get(status, status)
