@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from time import monotonic
 from typing import Any, Protocol, cast
@@ -8,6 +8,7 @@ from typing import Any, Protocol, cast
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from crypto_smc.db.repositories.market_data import MarketDataRepository
 from crypto_smc.db.repositories.signals import (
     SignalRepository,
     TrackingSignalView,
@@ -19,10 +20,16 @@ from crypto_smc.providers.bybit.trade_websocket import (
     TradeStreamEvent,
     TradeStreamReadyEvent,
 )
-from crypto_smc.providers.models import PublicTrade
+from crypto_smc.providers.models import Candle1m, PublicTrade
 from crypto_smc.providers.protocols import PublicTradeProvider
 from crypto_smc.signals.coverage import merge_trade_coverage
-from crypto_smc.signals.lifecycle import LifecycleState, evaluate_public_trade
+from crypto_smc.signals.fallback import evaluate_closed_candle
+from crypto_smc.signals.funding import estimate_funding_cost
+from crypto_smc.signals.lifecycle import (
+    LifecycleAction,
+    LifecycleState,
+    evaluate_public_trade,
+)
 from crypto_smc.signals.state_machine import SignalStatus
 
 logger = structlog.get_logger(__name__)
@@ -48,6 +55,18 @@ class PublicTradeStream(Protocol):
     async def stop(self) -> None: ...
 
 
+class FallbackCandleRepository(Protocol):
+    async def load_reconciled_1m_window(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        symbol: str,
+        start_open_time: datetime,
+        end_open_time: datetime,
+        stream: str = "kline_1m",
+    ) -> tuple[Candle1m, ...]: ...
+
+
 class SignalLifecycleService:
     def __init__(
         self,
@@ -59,6 +78,7 @@ class SignalLifecycleService:
         recent_trade_limit: int,
         checkpoint_interval_seconds: float,
         repository: SignalRepository | None = None,
+        fallback_repository: FallbackCandleRepository | None = None,
     ) -> None:
         self._provider = provider
         self._stream = stream
@@ -67,9 +87,11 @@ class SignalLifecycleService:
         self._recent_trade_limit = recent_trade_limit
         self._checkpoint_interval_seconds = checkpoint_interval_seconds
         self._repository = repository or SignalRepository()
+        self._fallback_repository = fallback_repository or MarketDataRepository()
         self._signals: dict[str, TrackingSignalView] = {}
         self._coverage_pending: dict[str, datetime] = {}
         self._last_checkpoint: dict[str, float] = {}
+        self._stream_ready: set[str] = set()
 
     async def run(self) -> None:
         await self._reconcile()
@@ -97,11 +119,26 @@ class SignalLifecycleService:
             await self._stream.unsubscribe(symbol)
             self._coverage_pending.pop(symbol, None)
             self._last_checkpoint.pop(symbol, None)
+            self._stream_ready.discard(symbol)
         self._signals = current
 
         now = datetime.now(UTC)
         for symbol, signal in tuple(self._signals.items()):
-            if signal.status in {"preparing", "active"} and signal.expires_at <= now:
+            if signal.status == "preparing" and signal.expires_at <= now:
+                await self._transition(
+                    signal,
+                    target="expired",
+                    event_time=signal.expires_at,
+                    idempotency_key=f"signal:{signal.id}:expired",
+                    event_type="signal_expired",
+                )
+                continue
+            if (
+                signal.status == "active"
+                and signal.expires_at <= now
+                and symbol not in self._coverage_pending
+                and symbol in self._stream_ready
+            ):
                 await self._transition(
                     signal,
                     target="expired",
@@ -113,14 +150,18 @@ class SignalLifecycleService:
             if symbol not in self._stream.symbols:
                 await self._stream.subscribe(symbol)
                 self._coverage_pending[symbol] = signal.coverage_anchor
+            elif symbol in self._coverage_pending and symbol in self._stream_ready:
+                await self._establish_coverage(symbol)
 
     async def _handle_event(self, event: TradeStreamEvent) -> None:
         if isinstance(event, TradeStreamDisconnectedEvent):
+            self._stream_ready.discard(event.symbol)
             signal = self._signals.get(event.symbol)
             if signal is not None:
-                self._coverage_pending[event.symbol] = event.disconnected_at
+                self._coverage_pending[event.symbol] = signal.coverage_anchor
             return
         if isinstance(event, TradeStreamReadyEvent):
+            self._stream_ready.add(event.symbol)
             await self._establish_coverage(event.symbol)
             return
         if isinstance(event, PublicTradeEvent):
@@ -147,19 +188,24 @@ class SignalLifecycleService:
         )
         if not coverage.proven:
             SIGNAL_COVERAGE_RESULTS.labels(result=coverage.reason or "failed").inc()
-            target: SignalStatus = (
-                "ambiguous" if signal.status in {"entered", "tp1_reached"} else "coverage_failed"
-            )
-            await self._transition(
+            if signal.status == "preparing":
+                await self._transition(
+                    signal,
+                    target="coverage_failed",
+                    event_time=datetime.now(UTC),
+                    idempotency_key=(
+                        f"signal:{signal.id}:coverage:{int(anchor.timestamp() * 1000)}"
+                    ),
+                    event_type="trade_coverage_failed",
+                    resolution_note=coverage.reason,
+                )
+                self._coverage_pending.pop(symbol, None)
+                return
+            await self._recover_with_candles(
                 signal,
-                target=target,
-                event_time=datetime.now(UTC),
-                idempotency_key=f"signal:{signal.id}:coverage:{int(anchor.timestamp() * 1000)}",
-                event_type="trade_coverage_failed",
-                ambiguous=target == "ambiguous",
-                resolution_note=coverage.reason,
+                anchor=anchor,
+                coverage_reason=coverage.reason or "unproven",
             )
-            self._coverage_pending.pop(symbol, None)
             return
 
         SIGNAL_COVERAGE_RESULTS.labels(result="proven").inc()
@@ -191,23 +237,17 @@ class SignalLifecycleService:
             return
         state = _lifecycle_state(signal)
         for index, action in enumerate(evaluate_public_trade(state, trade)):
-            await self._transition(
+            await self._apply_action(
                 signal,
-                target=action.target,
+                action=action,
                 event_time=trade.executed_at,
                 idempotency_key=(f"trade:{signal.id}:{trade.trade_id}:{action.target}:{index}"),
-                event_type=action.event_type,
                 source_event_id=trade.trade_id,
                 payload={
                     "price": str(trade.price),
                     "size": str(trade.size),
                     "sequence": trade.sequence,
                 },
-                realized_pnl=action.realized_pnl,
-                fees=action.fees,
-                r_multiple=action.r_multiple,
-                current_stop=action.current_stop,
-                remaining_quantity=action.remaining_quantity,
             )
             signal = self._signals.get(trade.symbol)
             if signal is None:
@@ -217,6 +257,136 @@ class SignalLifecycleService:
             last = self._last_checkpoint.get(trade.symbol, 0.0)
             if monotonic() - last >= self._checkpoint_interval_seconds:
                 await self._checkpoint(signal, trade)
+
+    async def _recover_with_candles(
+        self,
+        signal: TrackingSignalView,
+        *,
+        anchor: datetime,
+        coverage_reason: str,
+    ) -> bool:
+        start_open_time = _minute_floor(anchor)
+        end_open_time = _minute_floor(datetime.now(UTC)) - timedelta(minutes=1)
+        if end_open_time < start_open_time:
+            return False
+        candles = await self._fallback_repository.load_reconciled_1m_window(
+            self._session_factory,
+            symbol=signal.symbol,
+            start_open_time=start_open_time,
+            end_open_time=end_open_time,
+        )
+        if not candles:
+            return False
+
+        for candle in candles:
+            current = self._signals.get(signal.symbol)
+            if current is None:
+                self._coverage_pending.pop(signal.symbol, None)
+                return True
+            state = _lifecycle_state(current)
+            for index, action in enumerate(evaluate_closed_candle(state, candle)):
+                await self._apply_action(
+                    current,
+                    action=action,
+                    event_time=candle.open_time + timedelta(minutes=1),
+                    idempotency_key=(
+                        f"fallback:{current.id}:{int(candle.open_time.timestamp())}:"
+                        f"{action.target}:{index}"
+                    ),
+                    source_event_id=None,
+                    payload={
+                        "open_time": candle.open_time.isoformat(),
+                        "open": str(candle.open_price),
+                        "high": str(candle.high_price),
+                        "low": str(candle.low_price),
+                        "close": str(candle.close_price),
+                        "coverage_reason": coverage_reason,
+                    },
+                    ambiguous=action.target == "ambiguous",
+                    resolution_note=(
+                        f"conservative_1m_fallback:{coverage_reason}"
+                        if action.target == "ambiguous"
+                        else None
+                    ),
+                )
+                current = self._signals.get(signal.symbol)
+                if current is None:
+                    self._coverage_pending.pop(signal.symbol, None)
+                    SIGNAL_COVERAGE_RESULTS.labels(result="fallback_resolved").inc()
+                    return True
+                state = _lifecycle_state(current)
+
+        self._coverage_pending.pop(signal.symbol, None)
+        SIGNAL_COVERAGE_RESULTS.labels(result="fallback_recovered").inc()
+        replay_from = end_open_time + timedelta(minutes=1)
+        await self._repository.record_tracking_event(
+            self._session_factory,
+            signal_id=signal.id,
+            event_time=replay_from,
+            idempotency_key=(f"signal:{signal.id}:fallback:{int(anchor.timestamp() * 1000)}"),
+            event_type="trade_coverage_fallback_recovered",
+            payload={
+                "coverage_reason": coverage_reason,
+                "start_open_time": start_open_time.isoformat(),
+                "end_open_time": end_open_time.isoformat(),
+                "candle_count": len(candles),
+            },
+        )
+        buffered = self._stream.buffered_trades(signal.symbol, since=replay_from)
+        for trade in buffered:
+            if signal.symbol not in self._signals:
+                break
+            await self._process_trade(trade, force_checkpoint=False)
+        if buffered and signal.symbol in self._signals:
+            await self._checkpoint(self._signals[signal.symbol], buffered[-1])
+        return True
+
+    async def _apply_action(
+        self,
+        signal: TrackingSignalView,
+        *,
+        action: LifecycleAction,
+        event_time: datetime,
+        idempotency_key: str,
+        source_event_id: str | None,
+        payload: dict[str, Any],
+        ambiguous: bool | None = None,
+        resolution_note: str | None = None,
+    ) -> None:
+        funding = Decimal(0)
+        realized_pnl = action.realized_pnl
+        r_multiple = action.r_multiple
+        if realized_pnl is not None and action.target in {
+            "tp1_reached",
+            "stopped",
+            "stopped_at_breakeven",
+            "tp2_completed",
+            "ambiguous",
+        }:
+            funding = estimate_funding_cost(
+                _lifecycle_state(signal),
+                event_time=event_time,
+                target=action.target,
+            )
+            realized_pnl -= funding
+            r_multiple = realized_pnl / signal.risk_amount
+        await self._transition(
+            signal,
+            target=action.target,
+            event_time=event_time,
+            idempotency_key=idempotency_key,
+            event_type=action.event_type,
+            source_event_id=source_event_id,
+            payload=payload,
+            realized_pnl=realized_pnl,
+            fees=action.fees,
+            estimated_funding=funding,
+            r_multiple=r_multiple,
+            ambiguous=ambiguous,
+            resolution_note=resolution_note,
+            current_stop=action.current_stop,
+            remaining_quantity=action.remaining_quantity,
+        )
 
     async def _transition(
         self,
@@ -230,6 +400,7 @@ class SignalLifecycleService:
         payload: dict[str, Any] | None = None,
         realized_pnl: Decimal | None = None,
         fees: Decimal | None = None,
+        estimated_funding: Decimal | None = None,
         r_multiple: Decimal | None = None,
         ambiguous: bool | None = None,
         resolution_note: str | None = None,
@@ -247,6 +418,7 @@ class SignalLifecycleService:
             payload=payload,
             realized_pnl=realized_pnl,
             fees=fees,
+            estimated_funding=estimated_funding,
             r_multiple=r_multiple,
             ambiguous=ambiguous,
             resolution_note=resolution_note,
@@ -267,6 +439,8 @@ class SignalLifecycleService:
         }
         if terminal:
             self._signals.pop(signal.symbol, None)
+            self._coverage_pending.pop(signal.symbol, None)
+            self._stream_ready.discard(signal.symbol)
             await self._stream.unsubscribe(signal.symbol)
             return
         self._signals[signal.symbol] = replace(
@@ -276,6 +450,8 @@ class SignalLifecycleService:
             remaining_quantity=(
                 remaining_quantity if remaining_quantity is not None else signal.remaining_quantity
             ),
+            entered_at=(event_time if target == "entered" else signal.entered_at),
+            tp1_reached_at=(event_time if target == "tp1_reached" else signal.tp1_reached_at),
         )
 
     async def _checkpoint(
@@ -324,4 +500,12 @@ def _lifecycle_state(signal: TrackingSignalView) -> LifecycleState:
         taker_fee_rate=signal.taker_fee_rate,
         expires_at=signal.expires_at,
         current_stop=signal.current_stop,
+        funding_rate=signal.funding_rate,
+        funding_interval_minutes=signal.funding_interval_minutes,
+        entered_at=signal.entered_at,
+        tp1_reached_at=signal.tp1_reached_at,
     )
+
+
+def _minute_floor(value: datetime) -> datetime:
+    return value.replace(second=0, microsecond=0)

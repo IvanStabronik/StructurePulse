@@ -30,7 +30,7 @@ type VirtualTradeStatus = Literal[
 SIGNAL_TRANSITIONS: dict[SignalStatus, frozenset[SignalStatus]] = {
     "suppressed": frozenset(),
     "preparing": frozenset({"active", "coverage_failed", "expired"}),
-    "active": frozenset({"entered", "expired", "invalidated", "coverage_failed"}),
+    "active": frozenset({"entered", "expired", "invalidated", "ambiguous", "coverage_failed"}),
     "entered": frozenset({"stopped", "tp1_reached", "ambiguous"}),
     "tp1_reached": frozenset({"stopped_at_breakeven", "tp2_completed", "ambiguous"}),
     "expired": frozenset(),

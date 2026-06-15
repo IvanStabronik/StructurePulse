@@ -237,12 +237,13 @@ Acceptance:
 
 Goal: publish unique signals and track virtual outcomes accurately.
 
-Status: in progress. M6-01 through M6-11 and M6-14 were completed on
-2026-06-15. Signal publication is atomic; public trades use dynamic
-subscriptions with REST overlap proof, identity-based merge, fail-closed
-coverage handling, exact trade-by-trade lifecycle transitions, durable
-checkpoints, and restart recovery. M6-12 remains open. M6-13 includes realized
-PnL, taker fees, and R multiple; estimated funding remains open.
+Status: completed on 2026-06-15. Signal publication is atomic; public trades
+use dynamic subscriptions with REST overlap proof, identity-based merge,
+fail-closed initial coverage, exact trade-by-trade lifecycle transitions,
+durable checkpoints, and restart recovery. Unrecoverable ordered-trade gaps use
+continuous ready-state 1m candles with conservative stop-first ambiguity.
+Final PnL and R include taker fees and prorated directional funding captured
+from the immutable analysis snapshot.
 
 Tasks:
 

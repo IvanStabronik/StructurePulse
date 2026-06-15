@@ -66,9 +66,25 @@ For initial activation and reconnect recovery, the worker:
 6. Deduplicates the merged data by trade ID and replays it chronologically.
 
 If this proof fails, the system fails closed. A signal waiting for entry becomes
-`coverage_failed`; an already entered position becomes `ambiguous`. Public
-trade checkpoints are stored on the virtual trade so a worker restart resumes
-from the last processed trade instead of duplicating transitions.
+`coverage_failed`. A signal that was already active is recovered from canonical
+closed 1m candles once the `kline_1m` checkpoint is `ready` and the complete
+minute range is continuous. Public trade checkpoints are stored on the virtual
+trade so a worker restart resumes from the last processed trade instead of
+duplicating transitions.
+
+The candle fallback is deliberately conservative:
+
+- Entry and Stop Loss in the same candle resolve stop-first as `ambiguous`.
+- Stop Loss and either target in the same candle resolve stop-first as
+  `ambiguous`.
+- Stop Loss and TP2 after TP1 resolve at fee-adjusted breakeven and remain
+  `ambiguous`.
+- A target touched in the entry candle is not credited unless its order after
+  entry is provable.
+- Missing, incomplete, or non-ready 1m data leaves recovery pending.
+
+After the closed-candle range is processed, buffered public trades newer than
+that range are replayed and exact trade tracking resumes.
 
 ## Virtual lifecycle
 
@@ -87,8 +103,11 @@ half the position and moves the remaining stop to fee-adjusted breakeven.
 Realized PnL, taker fees, remaining quantity, and R multiple are persisted with
 the transition.
 
-Conservative 1m fallback resolution and estimated funding remain to be
-implemented before M6 is complete.
+Funding uses the rate captured in the immutable strategy analysis and the
+instrument funding interval. The estimate is prorated by actual holding time;
+LONG pays positive funding, SHORT receives it, and quantity is halved after
+TP1. `realized_pnl` and R multiple include the estimated funding, while fees
+and funding remain separately stored for auditability.
 
 ## Debug API
 

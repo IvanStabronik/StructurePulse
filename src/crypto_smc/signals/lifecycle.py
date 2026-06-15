@@ -23,6 +23,10 @@ class LifecycleState:
     taker_fee_rate: Decimal
     expires_at: datetime
     current_stop: Decimal
+    funding_rate: Decimal = Decimal(0)
+    funding_interval_minutes: int = 480
+    entered_at: datetime | None = None
+    tp1_reached_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

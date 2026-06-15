@@ -61,9 +61,20 @@ class SignalRecord(Base):
         default=Decimal("0.00055"),
         server_default="0.00055",
     )
+    funding_rate: Mapped[Decimal] = mapped_column(
+        Numeric(20, 12),
+        default=Decimal(0),
+        server_default="0",
+    )
+    funding_interval_minutes: Mapped[int] = mapped_column(
+        Integer,
+        default=480,
+        server_default="480",
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tp1_reached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(

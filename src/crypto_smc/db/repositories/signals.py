@@ -7,6 +7,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crypto_smc.db.models import (
+    AnalysisSnapshotRecord,
+    InstrumentRecord,
     SignalCandidateRecord,
     SignalEventRecord,
     SignalRecord,
@@ -69,6 +71,8 @@ class SignalView:
     realized_pnl: Decimal | None
     r_multiple: Decimal | None
     ambiguous: bool | None
+    fees: Decimal | None = None
+    estimated_funding: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +97,10 @@ class TrackingSignalView:
     last_trade_id: str | None
     last_trade_time: datetime | None
     last_trade_sequence: int | None
+    funding_rate: Decimal = Decimal(0)
+    funding_interval_minutes: int = 480
+    entered_at: datetime | None = None
+    tp1_reached_at: datetime | None = None
 
     @property
     def coverage_anchor(self) -> datetime:
@@ -151,11 +159,25 @@ class SignalRepository:
                 config=config,
             )
             status = "preparing" if decision.allowed else "suppressed"
+            snapshot = await session.get(
+                AnalysisSnapshotRecord,
+                record.analysis_snapshot_id,
+            )
+            instrument = await session.get(InstrumentRecord, record.symbol)
+            funding_rate = Decimal(0)
+            if snapshot is not None:
+                raw_funding_rate = snapshot.market_context.get("funding_rate")
+                if raw_funding_rate is not None:
+                    funding_rate = Decimal(str(raw_funding_rate))
             signal = self._signal_record(
                 record,
                 status=status,
                 reason=decision.reason,
                 now=publication_time,
+                funding_rate=funding_rate,
+                funding_interval_minutes=(
+                    instrument.funding_interval_minutes if instrument is not None else 480
+                ),
             )
             session.add(signal)
             await session.flush()
@@ -237,6 +259,10 @@ class SignalRepository:
                 last_trade_id=trade.last_trade_id,
                 last_trade_time=trade.last_trade_time,
                 last_trade_sequence=trade.last_trade_sequence,
+                funding_rate=signal.funding_rate,
+                funding_interval_minutes=signal.funding_interval_minutes,
+                entered_at=signal.entered_at,
+                tp1_reached_at=signal.tp1_reached_at,
             )
             for signal, trade in rows
         )
@@ -284,6 +310,8 @@ class SignalRepository:
                 realized_pnl=trade.realized_pnl if trade is not None else None,
                 r_multiple=trade.r_multiple if trade is not None else None,
                 ambiguous=trade.ambiguous if trade is not None else None,
+                fees=trade.fees if trade is not None else None,
+                estimated_funding=(trade.estimated_funding if trade is not None else None),
             )
             for signal, trade in rows
         ]
@@ -301,6 +329,7 @@ class SignalRepository:
         payload: dict[str, Any] | None = None,
         realized_pnl: Decimal | None = None,
         fees: Decimal | None = None,
+        estimated_funding: Decimal | None = None,
         r_multiple: Decimal | None = None,
         ambiguous: bool | None = None,
         resolution_note: str | None = None,
@@ -352,6 +381,8 @@ class SignalRepository:
             if next_status == "entered":
                 signal.entered_at = event_time
                 trade.entered_at = event_time
+            if next_status == "tp1_reached":
+                signal.tp1_reached_at = event_time
             if next_status in TERMINAL_SIGNAL_STATUSES:
                 signal.closed_at = event_time
                 trade.resolved_at = event_time
@@ -359,6 +390,8 @@ class SignalRepository:
                 trade.realized_pnl = realized_pnl
             if fees is not None:
                 trade.fees = fees
+            if estimated_funding is not None:
+                trade.estimated_funding = estimated_funding
             if r_multiple is not None:
                 trade.r_multiple = r_multiple
             if ambiguous is not None:
@@ -414,6 +447,41 @@ class SignalRepository:
             trade.last_trade_time = executed_at
             trade.last_trade_sequence = sequence
 
+    async def record_tracking_event(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        signal_id: int,
+        event_time: datetime,
+        idempotency_key: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        async with session_factory() as session, session.begin():
+            existing = await session.scalar(
+                select(SignalEventRecord.id).where(
+                    SignalEventRecord.idempotency_key == idempotency_key
+                )
+            )
+            if existing is not None:
+                return False
+            signal = await session.get(SignalRecord, signal_id)
+            if signal is None:
+                raise ValueError(f"Signal {signal_id} does not exist")
+            session.add(
+                SignalEventRecord(
+                    signal_id=signal_id,
+                    event_type=event_type,
+                    status_from=signal.status,
+                    status_to=signal.status,
+                    event_time=event_time,
+                    source_event_id=None,
+                    idempotency_key=idempotency_key,
+                    payload=payload,
+                )
+            )
+        return True
+
     @staticmethod
     def _signal_record(
         candidate: SignalCandidateRecord,
@@ -421,6 +489,8 @@ class SignalRepository:
         status: str,
         reason: str | None,
         now: datetime,
+        funding_rate: Decimal,
+        funding_interval_minutes: int,
     ) -> SignalRecord:
         required = (
             candidate.entry_lower,
@@ -455,6 +525,8 @@ class SignalRepository:
                 and candidate.notional > 0
                 else Decimal("0.00055")
             ),
+            funding_rate=funding_rate,
+            funding_interval_minutes=funding_interval_minutes,
             expires_at=candidate.expires_at,
             created_at=now,
             updated_at=now,

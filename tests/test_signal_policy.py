@@ -158,6 +158,7 @@ def test_signal_state_machine_accepts_only_declared_transitions() -> None:
 
 def test_virtual_trade_state_machine_is_conservative() -> None:
     assert transition_virtual_trade("waiting_entry", "ambiguous") == "ambiguous"
+    assert transition_signal("active", "ambiguous") == "ambiguous"
     assert transition_virtual_trade("tp1_reached", "stopped_at_breakeven") == "stopped_at_breakeven"
 
     with pytest.raises(ValueError, match="Invalid virtual trade transition"):

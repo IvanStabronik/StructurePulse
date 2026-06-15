@@ -362,6 +362,62 @@ class MarketDataRepository:
             for checkpoint in checkpoints
         ]
 
+    async def load_reconciled_1m_window(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        symbol: str,
+        start_open_time: datetime,
+        end_open_time: datetime,
+        stream: str = "kline_1m",
+    ) -> tuple[Candle1m, ...]:
+        if end_open_time < start_open_time:
+            return ()
+        async with session_factory() as session:
+            checkpoint = await session.scalar(
+                select(DataCheckpointRecord).where(
+                    DataCheckpointRecord.symbol == symbol,
+                    DataCheckpointRecord.stream == stream,
+                )
+            )
+            if (
+                checkpoint is None
+                or checkpoint.state != "ready"
+                or checkpoint.last_confirmed_open_time is None
+                or checkpoint.last_confirmed_open_time < end_open_time
+            ):
+                return ()
+            records = (
+                await session.scalars(
+                    select(Candle1mRecord)
+                    .where(
+                        Candle1mRecord.symbol == symbol,
+                        Candle1mRecord.open_time >= start_open_time,
+                        Candle1mRecord.open_time <= end_open_time,
+                    )
+                    .order_by(Candle1mRecord.open_time)
+                )
+            ).all()
+        expected_count = int((end_open_time - start_open_time) / timedelta(minutes=1)) + 1
+        if len(records) != expected_count:
+            return ()
+        for index, record in enumerate(records):
+            if record.open_time != start_open_time + timedelta(minutes=index):
+                return ()
+        return tuple(
+            Candle1m(
+                symbol=record.symbol,
+                open_time=record.open_time,
+                open_price=record.open_price,
+                high_price=record.high_price,
+                low_price=record.low_price,
+                close_price=record.close_price,
+                volume=record.volume,
+                turnover=record.turnover,
+            )
+            for record in records
+        )
+
     @staticmethod
     async def _upsert_checkpoint(
         session: AsyncSession,
