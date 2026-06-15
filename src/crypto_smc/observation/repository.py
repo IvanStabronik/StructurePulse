@@ -14,6 +14,7 @@ from crypto_smc.db.models import (
     VirtualTradeRecord,
 )
 from crypto_smc.observation.models import (
+    CandidateObservation,
     EvaluationReport,
     EvaluationWindow,
     TradeObservation,
@@ -164,6 +165,7 @@ class ObservationRepository:
                 raise ValueError("Evaluation window not found")
             record, version = window_row
             window = _window_view(record, version)
+            candidates = await self._load_candidates(session, record)
             trades = await self._load_trades(session, record)
             suppression_reasons = await self._suppression_reasons(session, record)
             gap_statement = (
@@ -198,9 +200,31 @@ class ObservationRepository:
         return build_evaluation_report(
             window=window,
             trades=trades,
+            candidates=candidates,
             suppression_reasons=suppression_reasons,
             unresolved_data_gaps=unresolved_gaps or 0,
             coverage_failures=coverage_failures or 0,
+        )
+
+    @staticmethod
+    async def _load_candidates(
+        session: AsyncSession,
+        window: EvaluationWindowRecord,
+    ) -> tuple[CandidateObservation, ...]:
+        statement = select(
+            SignalCandidateRecord.symbol,
+            SignalCandidateRecord.status,
+            SignalCandidateRecord.score,
+        ).where(
+            SignalCandidateRecord.strategy_version_id == window.strategy_version_id,
+            SignalCandidateRecord.created_at >= window.started_at,
+        )
+        if window.ended_at is not None:
+            statement = statement.where(SignalCandidateRecord.created_at <= window.ended_at)
+        rows = (await session.execute(statement)).all()
+        return tuple(
+            CandidateObservation(symbol=symbol, status=status, score=score)
+            for symbol, status, score in rows
         )
 
     @staticmethod
@@ -276,6 +300,7 @@ def _window_view(
         id=record.id,
         name=record.name,
         strategy_version=strategy_version,
+        strategy_parameter_checksum=str(record.configuration["parameter_checksum"]),
         status=record.status,
         started_at=record.started_at,
         ended_at=record.ended_at,

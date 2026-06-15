@@ -13,7 +13,7 @@ from crypto_smc.replay.models import (
     ReplaySummary,
 )
 from crypto_smc.strategy import StrategyConfig
-from crypto_smc.strategy.serialization import json_safe
+from crypto_smc.strategy.serialization import json_safe, parameter_checksum
 
 
 def build_summary(
@@ -85,8 +85,10 @@ def write_reports(
     summary: ReplaySummary,
 ) -> None:
     output_directory.mkdir(parents=True, exist_ok=True)
+    parameters = config.parameter_snapshot()
     payload = {
-        "strategy": config.parameter_snapshot(),
+        "strategy": parameters,
+        "strategy_parameter_checksum": parameter_checksum(parameters),
         "summary": json_safe(summary),
         "candidates": [
             {

@@ -47,3 +47,19 @@ Eligibility for an execution review requires all of these:
 
 The verdict is only evidence for manual review. It never enables real order
 execution.
+
+## Live versus replay
+
+```powershell
+docker compose run --rm --volume "${PWD}/data:/app/data" api `
+  python -m crypto_smc.observation compare `
+  --replay-report /app/data/replay-output/report.json `
+  --output /app/data/live-vs-replay.json
+```
+
+Comparison is rejected unless the strategy version and parameter checksum
+match exactly. It reports deltas for signal frequency, acceptance rate,
+average score, score-band shares, entry rate, win rate, ambiguity, average R,
+Profit Factor, and drawdown. Results remain `preliminary` while the live window
+is shorter than 24 hours, either side has fewer than 30 completed outcomes, or
+the replay contains no market rows.

@@ -8,6 +8,7 @@ class EvaluationWindow:
     id: int
     name: str
     strategy_version: str
+    strategy_parameter_checksum: str
     status: str
     started_at: datetime
     ended_at: datetime | None
@@ -33,6 +34,25 @@ class TradeObservation:
     estimated_funding: Decimal
     r_multiple: Decimal
     ambiguous: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateObservation:
+    symbol: str
+    status: str
+    score: int
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateMetrics:
+    total: int
+    accepted: int
+    suppressed: int
+    symbols: int
+    duration_hours: Decimal
+    accepted_per_symbol_day: Decimal
+    average_score: Decimal
+    score_bands: dict[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +87,7 @@ class ReadinessAssessment:
 class EvaluationReport:
     window: EvaluationWindow
     generated_at: datetime
+    candidates: CandidateMetrics
     overall: PerformanceMetrics
     maximum_drawdown: Decimal
     maximum_drawdown_fraction: Decimal

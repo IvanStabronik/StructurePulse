@@ -21,7 +21,7 @@ from crypto_smc.db.models import (
 from crypto_smc.db.repositories.signals import SignalRepository
 from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.strategy import SignalCandidate, StrategyConfig, StrategyInput
-from crypto_smc.strategy.serialization import json_safe
+from crypto_smc.strategy.serialization import json_safe, parameter_checksum
 from smc_core import Candle, Timeframe
 
 
@@ -268,13 +268,7 @@ class StrategyRepository:
         config: StrategyConfig,
     ) -> StrategyVersionRecord:
         parameters = config.parameter_snapshot()
-        checksum = hashlib.sha256(
-            json.dumps(
-                parameters,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        checksum = parameter_checksum(parameters)
         frozen_version = await session.scalar(
             select(StrategyVersionRecord.version)
             .join(

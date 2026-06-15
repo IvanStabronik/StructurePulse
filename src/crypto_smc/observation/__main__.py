@@ -7,12 +7,14 @@ from typing import cast
 
 from crypto_smc.config import get_settings
 from crypto_smc.db.session import create_engine, create_session_factory
+from crypto_smc.observation.comparison import compare_live_to_replay
 from crypto_smc.observation.repository import ObservationRepository
 from crypto_smc.strategy import StrategyConfig
 from crypto_smc.strategy.serialization import json_safe
 
 
 def _write_report(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, sort_keys=True, indent=2),
         encoding="utf-8",
@@ -32,6 +34,11 @@ def parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="Build a live performance report")
     report.add_argument("--name")
     report.add_argument("--output")
+
+    compare = commands.add_parser("compare", help="Compare live and replay reports")
+    compare.add_argument("--name")
+    compare.add_argument("--replay-report", required=True, type=Path)
+    compare.add_argument("--output")
 
     commands.add_parser("close", help="Close the active evaluation window")
     return root
@@ -60,7 +67,20 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             session_factory,
             window_name=args.name,
         )
-        payload = cast(dict[str, object], json_safe(asdict(report)))
+        if args.command == "compare":
+            replay_payload = cast(
+                dict[str, object],
+                json.loads(
+                    await asyncio.to_thread(
+                        args.replay_report.read_text,
+                        encoding="utf-8",
+                    )
+                ),
+            )
+            comparison = compare_live_to_replay(report, replay_payload)
+            payload = cast(dict[str, object], json_safe(asdict(comparison)))
+        else:
+            payload = cast(dict[str, object], json_safe(asdict(report)))
         if args.output:
             await asyncio.to_thread(
                 _write_report,

@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from crypto_smc.observation.models import (
+    CandidateMetrics,
+    CandidateObservation,
     EvaluationReport,
     EvaluationWindow,
     PerformanceMetrics,
@@ -16,6 +18,7 @@ def build_evaluation_report(
     *,
     window: EvaluationWindow,
     trades: tuple[TradeObservation, ...],
+    candidates: tuple[CandidateObservation, ...] = (),
     suppression_reasons: dict[str, int],
     unresolved_data_gaps: int,
     coverage_failures: int,
@@ -57,9 +60,11 @@ def build_evaluation_report(
         if ready
         else ("insufficient_sample" if not checks["minimum_sample"] else "criteria_not_met")
     )
+    report_time = generated_at or datetime.now(UTC)
     return EvaluationReport(
         window=window,
-        generated_at=generated_at or datetime.now(UTC),
+        generated_at=report_time,
+        candidates=_candidate_metrics(window, candidates, report_time),
         overall=overall,
         maximum_drawdown=maximum_drawdown,
         maximum_drawdown_fraction=maximum_drawdown_fraction,
@@ -78,6 +83,35 @@ def build_evaluation_report(
             completed_required=window.minimum_completed_signals,
             completed_observed=overall.completed,
         ),
+    )
+
+
+def _candidate_metrics(
+    window: EvaluationWindow,
+    candidates: tuple[CandidateObservation, ...],
+    generated_at: datetime,
+) -> CandidateMetrics:
+    end_time = window.ended_at or generated_at
+    duration_seconds = max(Decimal(0), Decimal(str((end_time - window.started_at).total_seconds())))
+    duration_hours = duration_seconds / Decimal(3600)
+    symbols = len({item.symbol for item in candidates})
+    accepted = sum(item.status == "accepted" for item in candidates)
+    symbol_days = Decimal(symbols) * duration_seconds / Decimal(86_400)
+    return CandidateMetrics(
+        total=len(candidates),
+        accepted=accepted,
+        suppressed=sum(item.status == "suppressed" for item in candidates),
+        symbols=symbols,
+        duration_hours=duration_hours,
+        accepted_per_symbol_day=(
+            Decimal(accepted) / symbol_days if symbol_days > 0 else Decimal(0)
+        ),
+        average_score=(
+            sum((Decimal(item.score) for item in candidates), Decimal(0)) / Decimal(len(candidates))
+            if candidates
+            else Decimal(0)
+        ),
+        score_bands=dict(sorted(Counter(_score_band(item.score) for item in candidates).items())),
     )
 
 

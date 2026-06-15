@@ -340,7 +340,9 @@ Status: in progress since 2026-06-15. Evaluation windows now freeze a strategy
 version and produce reproducible live reports grouped by symbol, direction,
 score band, and UTC trading session. Reports include costs, ambiguity,
 drawdown, suppressions, data-quality defects, and conservative readiness
-criteria. Continuous observation and the 100-signal threshold remain ongoing.
+criteria. Equivalent live and replay reports can now be compared using an
+immutable strategy checksum. Continuous observation and the 100-signal
+threshold remain ongoing.
 
 Tasks:
 
