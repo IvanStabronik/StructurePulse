@@ -9,8 +9,9 @@ Canonical 1m data is deterministically aggregated into 5m, 15m, 1H, and 4H
 candles through a durable priority queue with resumable historical rebuilds.
 The pure synchronous `smc_core` package detects deterministic swings,
 structure breaks, liquidity events, displacement, FVGs, Order Blocks, and
-dealing ranges. Strategy composition and Telegram signal delivery are not
-implemented yet.
+dealing ranges. The worker composes closed 4H/1H/15m/5m analyses into
+auditable LONG and SHORT candidates with scoring, fee-aware risk sizing, and
+suppression reasons. Telegram signal delivery is not implemented yet.
 
 ## Requirements
 
@@ -37,6 +38,8 @@ Open:
 - Market-data status: `http://localhost:8000/market-data/status`
 - Aggregation status: `http://localhost:8000/aggregation/status`
 - Debug instruments: `http://localhost:8000/debug/instruments`
+- Debug candidates: `http://localhost:8000/debug/candidates`
+- Debug accepted plans: `http://localhost:8000/debug/signals`
 
 Debug routes exist only when `DEBUG_API_ENABLED=true`.
 

@@ -42,6 +42,7 @@ class LiveMarketDataService:
         session_factory: async_sessionmaker[AsyncSession],
         reconciliation_interval_seconds: float,
         universe_refresh_interval_seconds: float = 24 * 60 * 60,
+        readiness_event: asyncio.Event | None = None,
         repository: MarketDataRepository | None = None,
     ) -> None:
         self._stream = stream
@@ -50,9 +51,11 @@ class LiveMarketDataService:
         self._session_factory = session_factory
         self._reconciliation_interval_seconds = reconciliation_interval_seconds
         self._universe_refresh_interval_seconds = universe_refresh_interval_seconds
+        self._readiness_event = readiness_event
         self._repository = repository or MarketDataRepository()
 
     async def run(self) -> None:
+        self._mark_not_ready()
         await self._universe_refresh.refresh()
         symbols = await self._active_symbols()
         if not symbols:
@@ -73,6 +76,7 @@ class LiveMarketDataService:
         try:
             await self._stream.wait_until_ready()
             await self._backfill.sync_once()
+            self._mark_ready()
             next_reconciliation = monotonic() + self._reconciliation_interval_seconds
             next_universe_refresh = monotonic() + self._universe_refresh_interval_seconds
 
@@ -94,7 +98,9 @@ class LiveMarketDataService:
                         await self._replace_symbols_if_changed()
                         next_universe_refresh = now + self._universe_refresh_interval_seconds
                     if now >= next_reconciliation:
+                        self._mark_not_ready()
                         await self._backfill.sync_once()
+                        self._mark_ready()
                         next_reconciliation = now + self._reconciliation_interval_seconds
                 else:
                     await self._handle_event(event)
@@ -109,15 +115,18 @@ class LiveMarketDataService:
                 candle=event.candle,
             )
             if result == "gap":
+                self._mark_not_ready()
                 await logger.awarning(
                     "market_data_live_gap_detected",
                     symbol=event.candle.symbol,
                     open_time=event.candle.open_time,
                 )
                 await self._backfill.sync_once()
+                self._mark_ready()
             return
 
         if isinstance(event, ShardDisconnectedEvent):
+            self._mark_not_ready()
             await self._repository.mark_stream_state(
                 session_factory=self._session_factory,
                 symbols=event.symbols,
@@ -135,6 +144,7 @@ class LiveMarketDataService:
                 state="recovering",
             )
             await self._backfill.sync_once()
+            self._mark_ready()
 
     async def _replace_symbols_if_changed(self) -> None:
         symbols = await self._active_symbols()
@@ -144,6 +154,7 @@ class LiveMarketDataService:
             await logger.aerror("market_data_universe_became_empty")
             return
 
+        self._mark_not_ready()
         await self._repository.mark_inactive_streams(
             session_factory=self._session_factory,
             active_symbols=symbols,
@@ -158,6 +169,7 @@ class LiveMarketDataService:
         await self._stream.start(symbols)
         await self._stream.wait_until_ready()
         await self._backfill.sync_once()
+        self._mark_ready()
         await logger.ainfo(
             "market_data_websocket_symbols_replaced",
             symbol_count=len(symbols),
@@ -167,3 +179,11 @@ class LiveMarketDataService:
         async with self._session_factory() as session:
             symbols = await self._repository.list_active_symbols(session)
         return tuple(sorted(symbols))
+
+    def _mark_ready(self) -> None:
+        if self._readiness_event is not None:
+            self._readiness_event.set()
+
+    def _mark_not_ready(self) -> None:
+        if self._readiness_event is not None:
+            self._readiness_event.clear()

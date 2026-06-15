@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     )
     aggregation_reconciliation_sample_size: int = Field(default=4, ge=1, le=100)
 
+    strategy_analysis_interval_seconds: float = Field(default=60, ge=10, le=3600)
+    strategy_history_candles: int = Field(default=300, ge=50, le=5000)
+    strategy_minimum_history_candles: int = Field(default=30, ge=20, le=1000)
+    strategy_process_workers: int = Field(default=2, ge=1, le=16)
+    strategy_max_pending_batches: int = Field(default=1, ge=1, le=20)
+
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()
 

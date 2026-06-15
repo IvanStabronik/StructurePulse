@@ -4,6 +4,7 @@ from prometheus_client import start_http_server
 
 from crypto_smc.aggregation.reconciliation import AggregationReconciliationService
 from crypto_smc.aggregation.service import AggregationService
+from crypto_smc.analysis import AnalysisProcessPool, StrategyAnalysisService
 from crypto_smc.config import get_settings
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
@@ -36,6 +37,7 @@ async def main() -> None:
         api_key_type=settings.coingecko_api_key_type,
     )
     session_factory = create_session_factory(engine)
+    market_data_ready = asyncio.Event()
     universe_service = UniverseRefreshService(
         instrument_provider=provider,
         ticker_provider=provider,
@@ -72,6 +74,7 @@ async def main() -> None:
         universe_refresh=universe_service,
         session_factory=session_factory,
         reconciliation_interval_seconds=settings.market_data_sync_interval_seconds,
+        readiness_event=market_data_ready,
     )
     aggregation_service = AggregationService(
         session_factory=session_factory,
@@ -87,12 +90,26 @@ async def main() -> None:
         interval_seconds=settings.aggregation_reconciliation_interval_seconds,
         sample_size=settings.aggregation_reconciliation_sample_size,
     )
+    analysis_process_pool = AnalysisProcessPool(
+        max_workers=settings.strategy_process_workers,
+        max_pending_batches=settings.strategy_max_pending_batches,
+    )
+    strategy_analysis = StrategyAnalysisService(
+        ticker_provider=provider,
+        session_factory=session_factory,
+        process_pool=analysis_process_pool,
+        interval_seconds=settings.strategy_analysis_interval_seconds,
+        history_candles=settings.strategy_history_candles,
+        minimum_history_candles=settings.strategy_minimum_history_candles,
+        readiness_event=market_data_ready,
+    )
 
     async def run_worker() -> None:
         await asyncio.gather(
             live_market_data.run(),
             aggregation_service.run(),
             aggregation_reconciliation.run(),
+            strategy_analysis.run(),
         )
 
     try:
@@ -101,6 +118,7 @@ async def main() -> None:
             service_name="worker",
         )
     finally:
+        await analysis_process_pool.close()
         await provider.close()
         await ranking_provider.close()
         await engine.dispose()

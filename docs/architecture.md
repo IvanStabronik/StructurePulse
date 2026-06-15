@@ -147,6 +147,10 @@ The exact v1 primitive definitions and boundary behavior are documented in
 must not add exchange, persistence, or event-loop behavior to the domain
 package.
 
+Strategy composition, scoring, mandatory filters, risk calculations, and
+snapshot audit rules are documented in `docs/strategy.md`. Market-data
+readiness gates strategy scheduling during startup, reconnect, and gap repair.
+
 Strategy calculations must never run directly on the market-data event loop
 when they can exceed the configured CPU budget:
 

@@ -1,20 +1,25 @@
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import asdict
+from datetime import datetime
+from typing import Literal
 
 import structlog
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from crypto_smc.config import Settings, get_settings
 from crypto_smc.db.repositories.aggregation import AggregationRepository
 from crypto_smc.db.repositories.market_data import MarketDataRepository
+from crypto_smc.db.repositories.strategy import CandidateFilters, StrategyRepository
 from crypto_smc.db.repositories.universe import UniverseRepository
 from crypto_smc.db.session import create_engine, create_session_factory, database_is_ready
 from crypto_smc.observability.logging import configure_logging
 from crypto_smc.providers.bybit import BybitClient
 from crypto_smc.providers.protocols import InstrumentProvider
+from crypto_smc.strategy.serialization import json_safe
 
 logger = structlog.get_logger(__name__)
 
@@ -24,6 +29,7 @@ def create_app(
     *,
     instrument_provider: InstrumentProvider | None = None,
     engine: AsyncEngine | None = None,
+    strategy_repository: StrategyRepository | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
@@ -37,6 +43,7 @@ def create_app(
     universe_repository = UniverseRepository()
     market_data_repository = MarketDataRepository()
     aggregation_repository = AggregationRepository()
+    candidate_repository = strategy_repository or StrategyRepository()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -147,6 +154,66 @@ def create_app(
             return {
                 "count": len(instruments),
                 "symbols": [instrument.symbol for instrument in instruments],
+            }
+
+        @app.get("/debug/candidates", tags=["debug"])
+        async def debug_candidates(
+            symbol: str | None = None,
+            direction: Literal["long", "short"] | None = None,
+            candidate_status: Literal["accepted", "suppressed"] | None = Query(
+                default=None,
+                alias="status",
+            ),
+            minimum_score: int | None = Query(default=None, ge=0, le=100),
+            strategy_version: str | None = None,
+            created_from: datetime | None = None,
+            created_to: datetime | None = None,
+            limit: int = Query(default=100, ge=1, le=500),
+        ) -> dict[str, object]:
+            candidates = await candidate_repository.list_candidates(
+                session_factory,
+                filters=CandidateFilters(
+                    symbol=symbol,
+                    direction=direction,
+                    status=candidate_status,
+                    minimum_score=minimum_score,
+                    strategy_version=strategy_version,
+                    created_from=created_from,
+                    created_to=created_to,
+                    limit=limit,
+                ),
+            )
+            return {
+                "count": len(candidates),
+                "items": [json_safe(asdict(candidate)) for candidate in candidates],
+            }
+
+        @app.get("/debug/signals", tags=["debug"])
+        async def debug_signals(
+            symbol: str | None = None,
+            direction: Literal["long", "short"] | None = None,
+            minimum_score: int | None = Query(default=None, ge=0, le=100),
+            strategy_version: str | None = None,
+            created_from: datetime | None = None,
+            created_to: datetime | None = None,
+            limit: int = Query(default=100, ge=1, le=500),
+        ) -> dict[str, object]:
+            candidates = await candidate_repository.list_candidates(
+                session_factory,
+                filters=CandidateFilters(
+                    symbol=symbol,
+                    direction=direction,
+                    status="accepted",
+                    minimum_score=minimum_score,
+                    strategy_version=strategy_version,
+                    created_from=created_from,
+                    created_to=created_to,
+                    limit=limit,
+                ),
+            )
+            return {
+                "count": len(candidates),
+                "items": [json_safe(asdict(candidate)) for candidate in candidates],
             }
 
     return app

@@ -185,6 +185,12 @@ Acceptance:
 
 Goal: convert market structures into auditable signal candidates.
 
+Status: in progress. M5-01 through M5-15 were completed on 2026-06-15:
+versioned snapshots, mirrored strategy composition, scoring, market filters,
+fee-aware risk sizing, persistence, live process-pool analysis, and filtered
+debug APIs are implemented. M5-16 through M5-20 (offline CSV replay and
+reports) remain for the next implementation wave.
+
 Tasks:
 
 - `M5-01` Create immutable strategy-version and analysis-snapshot tables.

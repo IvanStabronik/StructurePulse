@@ -92,3 +92,9 @@ AGGREGATION_RECONCILIATIONS = Counter(
     "Aggregate comparisons with Bybit REST",
     labelnames=("timeframe", "result"),
 )
+
+STRATEGY_ANALYSIS_RESULTS = Counter(
+    "crypto_smc_strategy_analysis_results_total",
+    "Strategy analysis outcomes",
+    labelnames=("result",),
+)
