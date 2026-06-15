@@ -116,3 +116,50 @@ SIGNAL_COVERAGE_RESULTS = Counter(
     "Signal public-trade coverage establishment results",
     labelnames=("result",),
 )
+
+EVENT_LOOP_LAG_SECONDS = Gauge(
+    "crypto_smc_event_loop_lag_seconds",
+    "Observed event-loop scheduling delay",
+)
+
+EVENT_LOOP_LAG_WARNINGS = Counter(
+    "crypto_smc_event_loop_lag_warnings_total",
+    "Event-loop lag threshold crossings",
+)
+
+STRATEGY_PROCESS_ACTIVE_BATCHES = Gauge(
+    "crypto_smc_strategy_process_active_batches",
+    "Strategy batches currently using process-pool capacity",
+)
+
+STRATEGY_PROCESS_WAITING_BATCHES = Gauge(
+    "crypto_smc_strategy_process_waiting_batches",
+    "Strategy batches waiting for process-pool capacity",
+)
+
+STRATEGY_PROCESS_SATURATION_RATIO = Gauge(
+    "crypto_smc_strategy_process_saturation_ratio",
+    "Fraction of configured strategy process-pool batch capacity in use",
+)
+
+WORKER_READY = Gauge(
+    "crypto_smc_worker_ready",
+    "Whether the worker is ready to generate new signals",
+)
+
+WORKER_QUIESCING = Gauge(
+    "crypto_smc_worker_quiescing",
+    "Whether the worker is draining before shutdown",
+)
+
+MAINTENANCE_DELETED_ROWS = Counter(
+    "crypto_smc_maintenance_deleted_rows_total",
+    "Rows removed by bounded retention maintenance",
+    labelnames=("table",),
+)
+
+MAINTENANCE_RUNS = Counter(
+    "crypto_smc_maintenance_runs_total",
+    "Database maintenance runs",
+    labelnames=("outcome",),
+)

@@ -41,6 +41,8 @@ Open:
 - Readiness: `http://localhost:8000/health/ready`
 - API metrics: `http://localhost:8000/metrics`
 - Worker market-data metrics: `http://localhost:8001/metrics`
+- Worker liveness: `http://localhost:8001/health/live`
+- Worker readiness: `http://localhost:8001/health/ready`
 - Current universe: `http://localhost:8000/universe/current`
 - Market-data status: `http://localhost:8000/market-data/status`
 - Aggregation status: `http://localhost:8000/aggregation/status`
@@ -69,6 +71,19 @@ The bot accepts commands only from IDs listed in
 `TELEGRAM_ALLOWED_USER_IDS`. New signal notifications follow each user's
 configured schedule; lifecycle tracking and lifecycle notifications continue
 outside that window. See `docs/telegram.md` for setup and commands.
+
+## Operations
+
+Run the smoke test after startup:
+
+```powershell
+docker run --rm crypto-smc-api python scripts/smoke_test.py `
+  --api-url http://host.docker.internal:8000 `
+  --worker-url http://host.docker.internal:8001
+```
+
+Backup, restore, outage drills, graceful shutdown, readiness semantics, and
+retention are documented in `docs/operations.md`.
 
 ## Quality checks
 

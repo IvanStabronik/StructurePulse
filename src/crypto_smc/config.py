@@ -19,6 +19,21 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     debug_api_enabled: bool = False
     worker_metrics_port: int = Field(default=8001, ge=1, le=65_535)
+    worker_health_timeout_seconds: float = Field(default=2, gt=0, le=30)
+    runtime_quiesce_seconds: float = Field(default=2, ge=0, le=30)
+    runtime_shutdown_timeout_seconds: float = Field(default=15, gt=0, le=120)
+    event_loop_probe_interval_seconds: float = Field(default=0.5, ge=0.1, le=10)
+    event_loop_warning_seconds: float = Field(default=0.25, gt=0, le=10)
+    required_database_revision: str = "0009"
+    migration_lock_timeout_seconds: int = Field(default=15, ge=1, le=300)
+    migration_statement_timeout_seconds: int = Field(default=120, ge=10, le=3600)
+    maintenance_interval_seconds: float = Field(default=86_400, ge=60, le=604_800)
+    maintenance_candle_1m_retention_days: int = Field(default=180, ge=30, le=3650)
+    maintenance_candle_agg_retention_days: int = Field(default=730, ge=30, le=3650)
+    maintenance_delete_batch_size: int = Field(default=5000, ge=100, le=50_000)
+    operational_warning_delay_seconds: float = Field(default=300, ge=30, le=3600)
+    operational_warning_cooldown_seconds: int = Field(default=1800, ge=300, le=86_400)
+    operational_monitor_interval_seconds: float = Field(default=30, ge=5, le=300)
 
     database_url: str = "postgresql+asyncpg://crypto_smc:crypto_smc@localhost:5432/crypto_smc"
 

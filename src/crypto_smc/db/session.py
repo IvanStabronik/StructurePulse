@@ -35,3 +35,16 @@ async def database_is_ready(engine: AsyncEngine) -> bool:
     except Exception:
         return False
     return True
+
+
+async def database_schema_is_ready(
+    engine: AsyncEngine,
+    *,
+    required_revision: str,
+) -> bool:
+    try:
+        async with engine.connect() as connection:
+            revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
+    except Exception:
+        return False
+    return str(revision) == required_revision

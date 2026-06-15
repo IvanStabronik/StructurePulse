@@ -27,17 +27,17 @@ class FakeInstrumentProvider:
                 status="Trading",
                 contract_type="LinearPerpetual",
                 launch_time=Instrument.timestamp_ms_to_datetime(str(payload["launchTime"])),
-                tick_size="0.1",  # type: ignore[arg-type]
-                min_price="0.1",  # type: ignore[arg-type]
-                max_price="1000000",  # type: ignore[arg-type]
-                quantity_step="0.001",  # type: ignore[arg-type]
-                min_order_quantity="0.001",  # type: ignore[arg-type]
-                max_order_quantity="1000",  # type: ignore[arg-type]
-                max_market_order_quantity="500",  # type: ignore[arg-type]
-                min_notional_value="5",  # type: ignore[arg-type]
-                min_leverage="1",  # type: ignore[arg-type]
-                max_leverage="100",  # type: ignore[arg-type]
-                leverage_step="0.01",  # type: ignore[arg-type]
+                tick_size="0.1",
+                min_price="0.1",
+                max_price="1000000",
+                quantity_step="0.001",
+                min_order_quantity="0.001",
+                max_order_quantity="1000",
+                max_market_order_quantity="500",
+                min_notional_value="5",
+                min_leverage="1",
+                max_leverage="100",
+                leverage_step="0.01",
                 funding_interval_minutes=480,
             )
         ]
@@ -140,6 +140,38 @@ async def test_debug_endpoint_is_disabled_by_default() -> None:
         response = await client.get("/debug/instruments")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_readiness_rejects_outdated_database_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ready_database(_: object) -> bool:
+        return True
+
+    async def outdated_schema(_: object, *, required_revision: str) -> bool:
+        assert required_revision == "0009"
+        return False
+
+    monkeypatch.setattr("crypto_smc.api.main.database_is_ready", ready_database)
+    monkeypatch.setattr(
+        "crypto_smc.api.main.database_schema_is_ready",
+        outdated_schema,
+    )
+    app = create_app(
+        Settings(app_env="test"),
+        instrument_provider=FakeInstrumentProvider(),
+        engine=FakeEngine(),  # type: ignore[arg-type]
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "database_schema_outdated"
 
 
 @pytest.mark.asyncio

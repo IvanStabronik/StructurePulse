@@ -45,6 +45,9 @@ async def run_until_stopped(
     job: Callable[[], Awaitable[None]],
     *,
     service_name: str,
+    quiesce: Callable[[], Awaitable[None] | None] | None = None,
+    quiesce_seconds: float = 0,
+    shutdown_timeout_seconds: float = 15,
 ) -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -69,8 +72,24 @@ async def run_until_stopped(
         if service_task in completed:
             await service_task
     finally:
+        if quiesce is not None:
+            result = quiesce()
+            if result is not None:
+                await result
+        if quiesce_seconds > 0 and not service_task.done():
+            await asyncio.sleep(quiesce_seconds)
         stop_task.cancel()
         if not service_task.done():
             service_task.cancel()
-        await asyncio.gather(service_task, stop_task, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(service_task, stop_task, return_exceptions=True),
+                timeout=shutdown_timeout_seconds,
+            )
+        except TimeoutError:
+            await logger.aerror(
+                "service_shutdown_timed_out",
+                service=service_name,
+                timeout_seconds=shutdown_timeout_seconds,
+            )
         await logger.ainfo("service_stopped", service=service_name)

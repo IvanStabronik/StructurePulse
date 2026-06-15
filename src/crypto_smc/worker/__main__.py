@@ -1,7 +1,5 @@
 import asyncio
 
-from prometheus_client import start_http_server
-
 from crypto_smc.aggregation.reconciliation import AggregationReconciliationService
 from crypto_smc.aggregation.service import AggregationService
 from crypto_smc.analysis import AnalysisProcessPool, StrategyAnalysisService
@@ -10,6 +8,8 @@ from crypto_smc.db.repositories.strategy import StrategyRepository
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
+from crypto_smc.observability.runtime import EventLoopMonitor, WorkerRuntimeState
+from crypto_smc.observability.worker_health import WorkerHealthServer
 from crypto_smc.providers.bybit import (
     BybitClient,
     BybitKlineWebSocketManager,
@@ -17,6 +17,8 @@ from crypto_smc.providers.bybit import (
 )
 from crypto_smc.providers.coingecko import CoinGeckoClient
 from crypto_smc.runtime import run_until_stopped
+from crypto_smc.services.maintenance import MaintenanceService
+from crypto_smc.services.operational_warnings import OperationalWarningService
 from crypto_smc.services.universe_refresh import UniverseRefreshService
 from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.signals.service import SignalLifecycleService
@@ -26,7 +28,6 @@ from crypto_smc.universe import UniversePolicyConfig
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    start_http_server(settings.worker_metrics_port, addr="0.0.0.0")
     engine = create_engine(settings.database_url)
     provider = BybitClient(
         base_url=settings.bybit_base_url,
@@ -45,6 +46,19 @@ async def main() -> None:
     )
     session_factory = create_session_factory(engine)
     market_data_ready = asyncio.Event()
+    runtime = WorkerRuntimeState(market_data_ready=market_data_ready)
+    event_loop_monitor = EventLoopMonitor(
+        interval_seconds=settings.event_loop_probe_interval_seconds,
+        warning_seconds=settings.event_loop_warning_seconds,
+        runtime=runtime,
+    )
+    health_server = WorkerHealthServer(
+        engine=engine,
+        runtime=runtime,
+        port=settings.worker_metrics_port,
+        required_database_revision=settings.required_database_revision,
+        dependency_timeout_seconds=settings.worker_health_timeout_seconds,
+    )
     universe_service = UniverseRefreshService(
         instrument_provider=provider,
         ticker_provider=provider,
@@ -137,6 +151,20 @@ async def main() -> None:
         recent_trade_limit=settings.signal_trade_recent_limit,
         checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
     )
+    maintenance = MaintenanceService(
+        session_factory=session_factory,
+        interval_seconds=settings.maintenance_interval_seconds,
+        candle_1m_retention_days=settings.maintenance_candle_1m_retention_days,
+        candle_agg_retention_days=settings.maintenance_candle_agg_retention_days,
+        batch_size=settings.maintenance_delete_batch_size,
+    )
+    operational_warnings = OperationalWarningService(
+        session_factory=session_factory,
+        runtime=runtime,
+        interval_seconds=settings.operational_monitor_interval_seconds,
+        warning_delay_seconds=settings.operational_warning_delay_seconds,
+        cooldown_seconds=settings.operational_warning_cooldown_seconds,
+    )
 
     async def run_worker() -> None:
         await asyncio.gather(
@@ -145,14 +173,22 @@ async def main() -> None:
             aggregation_reconciliation.run(),
             strategy_analysis.run(),
             signal_lifecycle.run(),
+            event_loop_monitor.run(),
+            maintenance.run(),
+            operational_warnings.run(),
         )
 
+    await health_server.start()
     try:
         await run_until_stopped(
             run_worker,
             service_name="worker",
+            quiesce=runtime.begin_quiescence,
+            quiesce_seconds=settings.runtime_quiesce_seconds,
+            shutdown_timeout_seconds=settings.runtime_shutdown_timeout_seconds,
         )
     finally:
+        await health_server.close()
         await analysis_process_pool.close()
         await provider.close()
         await ranking_provider.close()

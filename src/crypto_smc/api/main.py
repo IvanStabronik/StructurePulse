@@ -19,7 +19,12 @@ from crypto_smc.db.repositories.signals import (
 )
 from crypto_smc.db.repositories.strategy import CandidateFilters, StrategyRepository
 from crypto_smc.db.repositories.universe import UniverseRepository
-from crypto_smc.db.session import create_engine, create_session_factory, database_is_ready
+from crypto_smc.db.session import (
+    create_engine,
+    create_session_factory,
+    database_is_ready,
+    database_schema_is_ready,
+)
 from crypto_smc.observability.logging import configure_logging
 from crypto_smc.providers.bybit import BybitClient
 from crypto_smc.providers.protocols import InstrumentProvider
@@ -77,6 +82,14 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="database_unavailable",
+            )
+        if not await database_schema_is_ready(
+            app_engine,
+            required_revision=app_settings.required_database_revision,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="database_schema_outdated",
             )
         return {"status": "ready"}
 

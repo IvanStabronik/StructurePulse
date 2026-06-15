@@ -8,6 +8,7 @@ from crypto_smc.config import get_settings
 from crypto_smc.db.repositories.notifications import NotificationRepository
 from crypto_smc.db.session import create_engine, create_session_factory
 from crypto_smc.observability.logging import configure_logging
+from crypto_smc.runtime import run_until_stopped
 from crypto_smc.telegram.commands import TelegramCommandService
 from crypto_smc.telegram.outbox import NotificationOutboxService
 from crypto_smc.telegram.transport import AiogramSender, create_router
@@ -31,8 +32,16 @@ async def main() -> None:
     )
     if not settings.telegram_bot_token:
         await logger.awarning("telegram_disabled_missing_token")
-        try:
+
+        async def idle() -> None:
             await asyncio.Event().wait()
+
+        try:
+            await run_until_stopped(
+                idle,
+                service_name="telegram-disabled",
+                shutdown_timeout_seconds=settings.runtime_shutdown_timeout_seconds,
+            )
         finally:
             await engine.dispose()
         return
@@ -81,12 +90,21 @@ async def main() -> None:
         allowed_user_count=len(settings.telegram_allowed_user_ids),
     )
     try:
-        await asyncio.gather(
-            outbox.run(),
-            dispatcher.start_polling(
-                bot,
-                allowed_updates=dispatcher.resolve_used_update_types(),
-            ),
+
+        async def run_telegram() -> None:
+            await asyncio.gather(
+                outbox.run(),
+                dispatcher.start_polling(
+                    bot,
+                    allowed_updates=dispatcher.resolve_used_update_types(),
+                    handle_signals=False,
+                ),
+            )
+
+        await run_until_stopped(
+            run_telegram,
+            service_name="telegram",
+            shutdown_timeout_seconds=settings.runtime_shutdown_timeout_seconds,
         )
     finally:
         await bot.session.close()

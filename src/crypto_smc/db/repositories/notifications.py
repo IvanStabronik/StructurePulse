@@ -47,6 +47,31 @@ class OutboxSummary:
 
 
 class NotificationRepository:
+    async def enqueue_operational_event(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        idempotency_key: str,
+        event_type: str,
+        payload: dict[str, object],
+        available_at: datetime | None = None,
+    ) -> bool:
+        statement = (
+            insert(NotificationOutboxRecord)
+            .values(
+                idempotency_key=idempotency_key,
+                event_type=event_type,
+                payload=payload,
+                status="pending",
+                available_at=available_at or datetime.now(UTC),
+            )
+            .on_conflict_do_nothing(index_elements=[NotificationOutboxRecord.idempotency_key])
+            .returning(NotificationOutboxRecord.id)
+        )
+        async with session_factory() as session, session.begin():
+            created_id = await session.scalar(statement)
+        return created_id is not None
+
     async def ensure_users(
         self,
         session_factory: async_sessionmaker[AsyncSession],

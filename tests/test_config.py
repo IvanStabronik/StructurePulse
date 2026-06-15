@@ -30,3 +30,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.telegram_schedule_start == time(7, 0)
     assert settings.telegram_schedule_end == time(20, 0)
     assert settings.signal_trade_checkpoint_interval_seconds == 1
+    assert settings.required_database_revision == "0009"
+    assert settings.runtime_shutdown_timeout_seconds == 15
+    assert settings.maintenance_candle_1m_retention_days == 180
+    assert settings.operational_warning_cooldown_seconds == 1800

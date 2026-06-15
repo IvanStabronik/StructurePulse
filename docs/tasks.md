@@ -303,6 +303,13 @@ Acceptance:
 
 Goal: make the local MVP stable enough for continuous observation.
 
+Status: completed on 2026-06-15. API and worker readiness fail closed on
+database, schema, market-data, or quiescence problems. The worker exposes
+event-loop and process-pool saturation metrics, performs bounded candle
+retention, and uses a two-phase shutdown. Migrations use advisory locking plus
+lock and statement timeouts. Backup, restore, outage drills, and smoke checks
+are documented in the operator runbook.
+
 Tasks:
 
 - `M8-01` Complete health and readiness dependency checks.

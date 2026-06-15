@@ -10,6 +10,24 @@ def render_notification(
     symbol = str(payload.get("symbol", "?"))
     direction = _direction(str(payload.get("direction", "?")), language)
     status = _status(str(payload.get("status", "?")), language)
+    if event_type in {"service_warning", "service_recovered"}:
+        recovered = event_type == "service_recovered"
+        title = (
+            ("СЕРВИС ВОССТАНОВЛЕН" if recovered else "СЕРВИС ДЕГРАДИРОВАН")
+            if language == "ru"
+            else ("SERVICE RECOVERED" if recovered else "SERVICE DEGRADED")
+        )
+        service_label = "Сервис" if language == "ru" else "Service"
+        status_label = "Статус" if language == "ru" else "Status"
+        reason_label = "Причина" if language == "ru" else "Reason"
+        return "\n".join(
+            (
+                title,
+                f"{service_label}: {payload.get('service', '?')}",
+                f"{status_label}: {status}",
+                f"{reason_label}: {payload.get('reason', '?')}",
+            )
+        )
     if event_type == "new_signal":
         title = "НОВЫЙ СИГНАЛ" if language == "ru" else "NEW SIGNAL"
         labels = (
@@ -118,4 +136,6 @@ def _status(status: str, language: str) -> str:
         "coverage_failed": "нет надёжного покрытия",
         "expired": "истёк",
         "invalidated": "инвалидирован",
+        "degraded": "деградирован",
+        "ready": "готов",
     }.get(status, status)

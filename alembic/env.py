@@ -2,7 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -14,7 +14,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+settings = get_settings()
+config.set_main_option("sqlalchemy.url", settings.database_url)
 target_metadata = Base.metadata
 
 
@@ -35,6 +36,13 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
     with context.begin_transaction():
+        connection.execute(
+            text(f"SET LOCAL lock_timeout = '{settings.migration_lock_timeout_seconds}s'")
+        )
+        connection.execute(
+            text(f"SET LOCAL statement_timeout = '{settings.migration_statement_timeout_seconds}s'")
+        )
+        connection.execute(text("SELECT pg_advisory_xact_lock(837420260615)"))
         context.run_migrations()
 
 
