@@ -273,6 +273,11 @@ Acceptance:
 
 Goal: deliver localized, idempotent signals and bot commands.
 
+Status: completed on 2026-06-15. Signal lifecycle transitions create durable
+outbox events in the same PostgreSQL transaction. Per-user deliveries support
+RU/EN rendering, score and Europe/Warsaw schedule filters, bounded retries,
+unknown-outcome protection, private commands, and pause/resume controls.
+
 Tasks:
 
 - `M7-01` Create notification outbox and user settings tables.

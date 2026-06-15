@@ -9,6 +9,7 @@ description = "Bybit USDT perpetual Smart Money Concepts signal monitor"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "aiogram>=3.29,<4",
     "alembic>=1.14,<2",
     "asyncpg>=0.30,<1",
     "fastapi>=0.115,<1",

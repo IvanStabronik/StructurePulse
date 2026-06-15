@@ -1,3 +1,4 @@
+from datetime import time
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
@@ -89,6 +90,14 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     telegram_allowed_user_ids: tuple[int, ...] = ()
+    telegram_default_language: Literal["ru", "en"] = "ru"
+    telegram_schedule_timezone: str = "Europe/Warsaw"
+    telegram_schedule_start: time = time(7, 0)
+    telegram_schedule_end: time = time(20, 0)
+    telegram_outbox_poll_seconds: float = Field(default=1, ge=0.1, le=60)
+    telegram_outbox_batch_size: int = Field(default=20, ge=1, le=100)
+    telegram_outbox_max_attempts: int = Field(default=5, ge=1, le=20)
+    telegram_retry_base_seconds: float = Field(default=2, ge=0.1, le=300)
 
     @field_validator("log_level")
     @classmethod

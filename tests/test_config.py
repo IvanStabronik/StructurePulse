@@ -1,8 +1,10 @@
+from datetime import time
+
 from crypto_smc.config import Settings
 
 
 def test_settings_parse_telegram_user_ids() -> None:
-    settings = Settings(telegram_allowed_user_ids="123, 456")  # type: ignore[arg-type]
+    settings = Settings(telegram_allowed_user_ids="123, 456")
 
     assert settings.telegram_allowed_user_ids == (123, 456)
 
@@ -23,4 +25,8 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.signal_burst_maximum == 3
     assert settings.signal_pause_on_abnormal_btc is True
     assert settings.signal_trade_recent_limit == 1000
+    assert settings.telegram_default_language == "ru"
+    assert settings.telegram_schedule_timezone == "Europe/Warsaw"
+    assert settings.telegram_schedule_start == time(7, 0)
+    assert settings.telegram_schedule_end == time(20, 0)
     assert settings.signal_trade_checkpoint_interval_seconds == 1

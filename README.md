@@ -15,7 +15,9 @@ suppression reasons. A deterministic offline replay command can run the same
 analysis over historical 1m CSV data and produce auditable JSON/CSV reports.
 Accepted candidates pass durable duplicate, cooldown, portfolio, burst, and
 BTC circuit-breaker checks before entering the signal lifecycle.
-Telegram signal delivery is not implemented yet.
+Telegram delivery uses a PostgreSQL transactional outbox, Russian or English
+messages, configurable score and schedule filters, and private commands for
+explicitly allowed user IDs.
 
 ## Requirements
 
@@ -27,6 +29,7 @@ Local Python is optional because all commands run in containers.
 
 ```powershell
 Copy-Item .env.example .env
+# Set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_IDS in .env.
 docker compose build
 docker compose run --rm migrate
 docker compose up -d postgres api worker telegram
@@ -59,6 +62,13 @@ docker compose run --rm --volume "${PWD}\data:/app/data" api `
 
 The CSV contract, chronology rules, conservative virtual outcomes, and report
 fields are documented in `docs/replay.md`.
+
+## Telegram
+
+The bot accepts commands only from IDs listed in
+`TELEGRAM_ALLOWED_USER_IDS`. New signal notifications follow each user's
+configured schedule; lifecycle tracking and lifecycle notifications continue
+outside that window. See `docs/telegram.md` for setup and commands.
 
 ## Quality checks
 

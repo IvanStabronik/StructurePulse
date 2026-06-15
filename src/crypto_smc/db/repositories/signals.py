@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from crypto_smc.db.models import (
     AnalysisSnapshotRecord,
     InstrumentRecord,
+    NotificationOutboxRecord,
     SignalCandidateRecord,
     SignalEventRecord,
     SignalRecord,
@@ -402,18 +403,36 @@ class SignalRepository:
                 trade.current_stop = current_stop
             if remaining_quantity is not None:
                 trade.remaining_quantity = remaining_quantity
-            session.add(
-                SignalEventRecord(
-                    signal_id=signal_id,
-                    event_type=event_type,
-                    status_from=current_status,
-                    status_to=next_status,
-                    event_time=event_time,
-                    source_event_id=source_event_id,
-                    idempotency_key=idempotency_key,
-                    payload=payload or {},
-                )
+            signal_event = SignalEventRecord(
+                signal_id=signal_id,
+                event_type=event_type,
+                status_from=current_status,
+                status_to=next_status,
+                event_time=event_time,
+                source_event_id=source_event_id,
+                idempotency_key=idempotency_key,
+                payload=payload or {},
             )
+            session.add(signal_event)
+            candidate = await session.get(SignalCandidateRecord, signal.candidate_id)
+            notification_type = _notification_type(next_status)
+            if notification_type is not None and candidate is not None:
+                session.add(
+                    NotificationOutboxRecord(
+                        idempotency_key=f"signal-event:{idempotency_key}",
+                        event_type=notification_type,
+                        signal_id=signal.id,
+                        payload=_notification_payload(
+                            signal,
+                            trade,
+                            candidate,
+                            event_type=event_type,
+                            event_time=event_time,
+                        ),
+                        status="pending",
+                        available_at=event_time,
+                    )
+                )
         return SignalTransitionResult(True, signal_id, next_status)
 
     async def checkpoint_trade(
@@ -586,3 +605,54 @@ def _virtual_trade_target(status: SignalStatus) -> VirtualTradeStatus | None:
         "coverage_failed": "coverage_failed",
     }
     return mapping[status]
+
+
+def _notification_type(status: SignalStatus) -> str | None:
+    mapping: dict[SignalStatus, str] = {
+        "active": "new_signal",
+        "entered": "entry_filled",
+        "tp1_reached": "take_profit_1",
+        "stopped": "signal_result",
+        "stopped_at_breakeven": "signal_result",
+        "tp2_completed": "signal_result",
+        "ambiguous": "signal_warning",
+        "coverage_failed": "signal_warning",
+        "expired": "signal_expired",
+        "invalidated": "signal_invalidated",
+        "preparing": "signal_warning",
+        "suppressed": "signal_warning",
+    }
+    return mapping.get(status)
+
+
+def _notification_payload(
+    signal: SignalRecord,
+    trade: VirtualTradeRecord,
+    candidate: SignalCandidateRecord,
+    *,
+    event_type: str,
+    event_time: datetime,
+) -> dict[str, object]:
+    return {
+        "signal_id": signal.id,
+        "symbol": signal.symbol,
+        "direction": signal.direction,
+        "status": signal.status,
+        "event_type": event_type,
+        "event_time": event_time.isoformat(),
+        "score": candidate.score,
+        "strength": candidate.strength,
+        "entry_lower": str(signal.entry_lower),
+        "entry_upper": str(signal.entry_upper),
+        "planned_entry": str(signal.planned_entry),
+        "stop_loss": str(signal.stop_loss),
+        "take_profit_1": str(signal.take_profit_1),
+        "take_profit_2": str(signal.take_profit_2),
+        "quantity": str(signal.quantity),
+        "risk_amount": str(signal.risk_amount),
+        "realized_pnl": str(trade.realized_pnl),
+        "fees": str(trade.fees),
+        "estimated_funding": str(trade.estimated_funding),
+        "r_multiple": str(trade.r_multiple),
+        "ambiguous": trade.ambiguous,
+    }

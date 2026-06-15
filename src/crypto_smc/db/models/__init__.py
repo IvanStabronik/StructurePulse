@@ -7,6 +7,11 @@ from crypto_smc.db.models.market_data import (
     DataCheckpointRecord,
     DataGapRecord,
 )
+from crypto_smc.db.models.notifications import (
+    NotificationDeliveryRecord,
+    NotificationOutboxRecord,
+    TelegramUserSettingsRecord,
+)
 from crypto_smc.db.models.signals import (
     SignalEventRecord,
     SignalRecord,
@@ -28,10 +33,13 @@ __all__ = [
     "DataCheckpointRecord",
     "DataGapRecord",
     "InstrumentRecord",
+    "NotificationDeliveryRecord",
+    "NotificationOutboxRecord",
     "SignalCandidateRecord",
     "SignalEventRecord",
     "SignalRecord",
     "StrategyVersionRecord",
+    "TelegramUserSettingsRecord",
     "UniverseMemberRecord",
     "UniverseSnapshotRecord",
     "VirtualTradeRecord",
