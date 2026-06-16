@@ -1,10 +1,10 @@
 from datetime import time
 from decimal import Decimal
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     universe_min_turnover_24h_usdt: Decimal = Field(default=Decimal("10000000"), ge=0)
     universe_max_spread_bps: Decimal = Field(default=Decimal("20"), ge=0)
     universe_min_trading_history_days: int = Field(default=30, ge=0)
-    universe_manual_denylist: frozenset[str] = frozenset()
+    universe_manual_denylist: Annotated[frozenset[str], NoDecode] = frozenset()
 
     market_data_initial_history_minutes: int = Field(default=10_080, ge=60, le=259_200)
     market_data_sync_interval_seconds: int = Field(default=60, ge=10, le=3600)
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     )
 
     telegram_bot_token: str | None = None
-    telegram_allowed_user_ids: tuple[int, ...] = ()
+    telegram_allowed_user_ids: Annotated[tuple[int, ...], NoDecode] = ()
     telegram_default_language: Literal["ru", "en"] = "ru"
     telegram_schedule_timezone: str = "Europe/Warsaw"
     telegram_schedule_start: time = time(7, 0)
@@ -125,7 +125,12 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return ()
         if isinstance(value, str):
-            return tuple(int(item.strip()) for item in value.split(",") if item.strip())
+            normalized = value.strip()
+            if normalized.startswith("[") and normalized.endswith("]"):
+                normalized = normalized[1:-1]
+            if not normalized:
+                return ()
+            return tuple(int(item.strip()) for item in normalized.split(",") if item.strip())
         return value
 
     @field_validator("universe_manual_denylist", mode="before")
@@ -134,7 +139,12 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return frozenset()
         if isinstance(value, str):
-            return frozenset(item.strip().upper() for item in value.split(",") if item.strip())
+            normalized = value.strip()
+            if normalized.startswith("[") and normalized.endswith("]"):
+                normalized = normalized[1:-1]
+            if not normalized:
+                return frozenset()
+            return frozenset(item.strip().upper() for item in normalized.split(",") if item.strip())
         return value
 
 

@@ -11,6 +11,8 @@ from crypto_smc.db.models import (
     NotificationDeliveryRecord,
     SignalCandidateRecord,
     SignalRecord,
+    UniverseMemberRecord,
+    UniverseSnapshotRecord,
     VirtualTradeRecord,
 )
 from crypto_smc.db.repositories.notifications import NotificationRepository
@@ -175,7 +177,18 @@ class TelegramQueryRepository:
             market_rows = (
                 await session.execute(
                     select(DataCheckpointRecord.state, func.count())
-                    .where(DataCheckpointRecord.stream == "kline_1m")
+                    .select_from(UniverseMemberRecord)
+                    .join(
+                        UniverseSnapshotRecord,
+                        UniverseSnapshotRecord.id == UniverseMemberRecord.snapshot_id,
+                    )
+                    .outerjoin(
+                        DataCheckpointRecord,
+                        (DataCheckpointRecord.symbol == UniverseMemberRecord.instrument_symbol)
+                        & (DataCheckpointRecord.stream == "kline_1m"),
+                    )
+                    .where(UniverseSnapshotRecord.is_active.is_(True))
+                    .where(UniverseMemberRecord.is_selected.is_(True))
                     .group_by(DataCheckpointRecord.state)
                 )
             ).all()
@@ -400,23 +413,24 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
 
 
 def _render_status(status: ServiceStatus, language: str) -> str:
-    title = "Статус системы" if language == "ru" else "System status"
-    labels = (
-        ("Рынок готов/деградирован", "Ожидают отправки", "Ошибки", "Исход неизвестен")
-        if language == "ru"
-        else (
-            "Market ready/degraded",
-            "Notifications pending",
-            "Notifications failed",
-            "Delivery unknown",
+    if language == "ru":
+        return "\n".join(
+            (
+                "Статус системы",
+                f"Рынок готов: {status.market_ready}",
+                f"Проблемные: {status.market_degraded}",
+                f"Ожидают отправки: {status.notification_pending}",
+                f"Ошибки: {status.notification_failed}",
+                f"Исход неизвестен: {status.delivery_unknown}",
+            )
         )
-    )
     return "\n".join(
         (
-            title,
-            f"{labels[0]}: {status.market_ready}/{status.market_degraded}",
-            f"{labels[1]}: {status.notification_pending}",
-            f"{labels[2]}: {status.notification_failed}",
-            f"{labels[3]}: {status.delivery_unknown}",
+            "System status",
+            f"Market ready: {status.market_ready}",
+            f"Market degraded: {status.market_degraded}",
+            f"Notifications pending: {status.notification_pending}",
+            f"Notifications failed: {status.notification_failed}",
+            f"Delivery unknown: {status.delivery_unknown}",
         )
     )

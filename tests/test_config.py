@@ -9,6 +9,22 @@ def test_settings_parse_telegram_user_ids() -> None:
     assert settings.telegram_allowed_user_ids == (123, 456)
 
 
+def test_settings_parse_single_and_json_telegram_user_ids() -> None:
+    assert Settings(telegram_allowed_user_ids="123").telegram_allowed_user_ids == (123,)
+    assert Settings(telegram_allowed_user_ids="[123, 456]").telegram_allowed_user_ids == (
+        123,
+        456,
+    )
+
+
+def test_settings_parse_empty_and_json_universe_denylist() -> None:
+    assert Settings(universe_manual_denylist="").universe_manual_denylist == frozenset()
+    assert Settings(universe_manual_denylist="[]").universe_manual_denylist == frozenset()
+    assert Settings(universe_manual_denylist="ton, h").universe_manual_denylist == frozenset(
+        {"TON", "H"}
+    )
+
+
 def test_settings_normalize_log_level() -> None:
     settings = Settings(log_level="debug")
 

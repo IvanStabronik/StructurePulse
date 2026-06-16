@@ -261,6 +261,11 @@ class FakeQueries:
         return ServiceStatus(30, 0, 1, 0, 0)
 
 
+class DegradedQueries(FakeQueries):
+    async def status(self, _: object) -> ServiceStatus:
+        return ServiceStatus(30, 2, 1, 0, 0)
+
+
 @pytest.mark.asyncio
 async def test_commands_support_localization_and_settings_updates() -> None:
     settings_repository = FakeSettingsRepository(settings())
@@ -285,6 +290,21 @@ async def test_commands_support_localization_and_settings_updates() -> None:
     assert paused == "Notifications paused."
     assert settings_repository.current is not None
     assert settings_repository.current.paused is True
+
+
+@pytest.mark.asyncio
+async def test_status_renders_ready_and_degraded_separately() -> None:
+    service = TelegramCommandService(
+        session_factory=object(),  # type: ignore[arg-type]
+        settings_repository=FakeSettingsRepository(settings(language="en")),  # type: ignore[arg-type]
+        query_repository=DegradedQueries(),  # type: ignore[arg-type]
+    )
+
+    response = await service.handle(42, "/status")
+
+    assert "Market ready: 30" in response
+    assert "Market degraded: 2" in response
+    assert "30/2" not in response
 
 
 @pytest.mark.asyncio

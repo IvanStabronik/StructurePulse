@@ -6,6 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crypto_smc.db.models import (
+    DataCheckpointRecord,
     DataGapRecord,
     EvaluationWindowRecord,
     SignalCandidateRecord,
@@ -171,8 +172,19 @@ class ObservationRepository:
             gap_statement = (
                 select(func.count())
                 .select_from(DataGapRecord)
+                .join(
+                    DataCheckpointRecord,
+                    (DataCheckpointRecord.symbol == DataGapRecord.symbol)
+                    & (DataCheckpointRecord.stream == DataGapRecord.stream),
+                )
                 .where(
-                    DataGapRecord.status.in_(("recovering", "failed")),
+                    (
+                        (DataGapRecord.status == "recovering")
+                        | (
+                            (DataGapRecord.status == "failed")
+                            & (DataCheckpointRecord.state != "ready")
+                        )
+                    ),
                     DataGapRecord.detected_at >= record.started_at,
                 )
             )
