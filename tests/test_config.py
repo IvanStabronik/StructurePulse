@@ -50,3 +50,11 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.runtime_shutdown_timeout_seconds == 15
     assert settings.maintenance_candle_1m_retention_days == 180
     assert settings.operational_warning_cooldown_seconds == 1800
+    assert settings.bybit_account_type == "UNIFIED"
+    assert settings.bybit_recv_window_ms == 5000
+    assert settings.execution_enabled is False
+    assert settings.execution_mode == "disabled"
+    assert settings.execution_order_budget_usdt == 50
+    assert settings.execution_max_open_positions == 1
+    assert settings.execution_max_trades_per_day == 2
+    assert settings.execution_max_daily_loss_usdt == 10

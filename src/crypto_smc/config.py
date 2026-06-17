@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     bybit_ws_reconnect_base_seconds: float = Field(default=1, gt=0, le=30)
     bybit_ws_reconnect_max_seconds: float = Field(default=30, ge=1, le=300)
     bybit_ws_ready_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    bybit_api_key: str | None = None
+    bybit_api_secret: str | None = None
+    bybit_account_type: Literal["UNIFIED"] = "UNIFIED"
+    bybit_recv_window_ms: int = Field(default=5000, ge=1000, le=60_000)
+
+    execution_enabled: bool = False
+    execution_mode: Literal["disabled", "approval", "auto"] = "disabled"
+    execution_order_budget_usdt: Decimal = Field(default=Decimal("50"), gt=0, le=100_000)
+    execution_max_open_positions: int = Field(default=1, ge=1, le=30)
+    execution_max_trades_per_day: int = Field(default=2, ge=1, le=100)
+    execution_max_daily_loss_usdt: Decimal = Field(default=Decimal("10"), gt=0, le=100_000)
+    execution_max_slippage_bps: Decimal = Field(default=Decimal("20"), ge=0, le=1000)
+    execution_leverage: Decimal = Field(default=Decimal("1"), ge=1, le=100)
 
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_api_key: str | None = None
