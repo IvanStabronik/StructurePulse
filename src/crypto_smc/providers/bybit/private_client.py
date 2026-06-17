@@ -41,6 +41,14 @@ class BybitOrderResult:
     order_link_id: str
 
 
+@dataclass(frozen=True)
+class BybitPosition:
+    symbol: str
+    side: str
+    size: Decimal
+    average_price: Decimal
+
+
 class BybitPrivateClient:
     def __init__(
         self,
@@ -134,6 +142,29 @@ class BybitPrivateClient:
             order_id=str(result.get("orderId", "")),
             order_link_id=str(result.get("orderLinkId", "")),
         )
+
+    async def get_linear_position(self, *, symbol: str) -> BybitPosition | None:
+        payload = await self._get(
+            "/v5/position/list",
+            params={"category": "linear", "symbol": symbol.upper()},
+        )
+        result = self._result_object(payload)
+        positions = result.get("list")
+        if not isinstance(positions, list):
+            raise BybitPrivateAPIError("Bybit position response is missing result.list")
+        for item in positions:
+            if not isinstance(item, dict):
+                continue
+            size = _decimal(item.get("size"))
+            if size <= 0:
+                continue
+            return BybitPosition(
+                symbol=str(item.get("symbol", "")).upper(),
+                side=str(item.get("side", "")),
+                size=size,
+                average_price=_decimal(item.get("avgPrice")),
+            )
+        return None
 
     async def set_full_position_stop(
         self,

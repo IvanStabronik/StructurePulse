@@ -170,3 +170,48 @@ async def test_set_full_position_stop_uses_trading_stop_endpoint() -> None:
         "slOrderType": "Market",
         "positionIdx": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_linear_position_returns_open_position() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v5/position/list"
+        assert request.url.query.decode() == "category=linear&symbol=BTCUSDT"
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "side": "Buy",
+                            "size": "0.25",
+                            "avgPrice": "100",
+                        }
+                    ]
+                },
+                "time": 1,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitPrivateClient(
+        base_url="https://unused.test",
+        api_key="test-key",
+        api_secret="test-secret",
+        timeout_seconds=1,
+        http_client=http_client,
+        timestamp_ms=lambda: 1,
+    )
+
+    position = await client.get_linear_position(symbol="btcusdt")
+    await http_client.aclose()
+
+    assert position is not None
+    assert position.symbol == "BTCUSDT"
+    assert position.size == Decimal("0.25")

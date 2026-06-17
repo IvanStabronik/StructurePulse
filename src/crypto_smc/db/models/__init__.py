@@ -1,3 +1,4 @@
+from crypto_smc.db.models.execution import LiveExecutionRecord
 from crypto_smc.db.models.instrument import InstrumentRecord
 from crypto_smc.db.models.market_data import (
     AggregatedCandleRecord,
@@ -35,6 +36,7 @@ __all__ = [
     "DataGapRecord",
     "EvaluationWindowRecord",
     "InstrumentRecord",
+    "LiveExecutionRecord",
     "NotificationDeliveryRecord",
     "NotificationOutboxRecord",
     "SignalCandidateRecord",

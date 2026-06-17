@@ -6,6 +6,7 @@ from crypto_smc.analysis import AnalysisProcessPool, StrategyAnalysisService
 from crypto_smc.config import get_settings
 from crypto_smc.db.repositories.strategy import StrategyRepository
 from crypto_smc.db.session import create_engine, create_session_factory
+from crypto_smc.execution.service import LiveExecutionService
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
 from crypto_smc.observability.runtime import EventLoopMonitor, WorkerRuntimeState
@@ -13,6 +14,7 @@ from crypto_smc.observability.worker_health import WorkerHealthServer
 from crypto_smc.providers.bybit import (
     BybitClient,
     BybitKlineWebSocketManager,
+    BybitPrivateClient,
     BybitPublicTradeWebSocketManager,
 )
 from crypto_smc.providers.coingecko import CoinGeckoClient
@@ -151,6 +153,29 @@ async def main() -> None:
         recent_trade_limit=settings.signal_trade_recent_limit,
         checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
     )
+    execution_client: BybitPrivateClient | None = None
+    live_execution: LiveExecutionService | None = None
+    if settings.execution_enabled and settings.execution_mode == "auto":
+        if not settings.bybit_api_key or not settings.bybit_api_secret:
+            raise RuntimeError("Live execution is enabled but Bybit API credentials are missing")
+        execution_client = BybitPrivateClient(
+            base_url=settings.bybit_base_url,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            timeout_seconds=settings.bybit_request_timeout_seconds,
+            recv_window_ms=settings.bybit_recv_window_ms,
+            max_requests_per_second=settings.bybit_max_requests_per_second,
+            max_concurrency=settings.bybit_max_concurrency,
+        )
+        live_execution = LiveExecutionService(
+            client=execution_client,
+            session_factory=session_factory,
+            order_budget_usdt=settings.execution_order_budget_usdt,
+            max_open_positions=settings.execution_max_open_positions,
+            max_trades_per_day=settings.execution_max_trades_per_day,
+            max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,
+            poll_interval_seconds=settings.execution_poll_interval_seconds,
+        )
     maintenance = MaintenanceService(
         session_factory=session_factory,
         interval_seconds=settings.maintenance_interval_seconds,
@@ -167,7 +192,7 @@ async def main() -> None:
     )
 
     async def run_worker() -> None:
-        await asyncio.gather(
+        tasks = [
             live_market_data.run(),
             aggregation_service.run(),
             aggregation_reconciliation.run(),
@@ -176,7 +201,10 @@ async def main() -> None:
             event_loop_monitor.run(),
             maintenance.run(),
             operational_warnings.run(),
-        )
+        ]
+        if live_execution is not None:
+            tasks.append(live_execution.run())
+        await asyncio.gather(*tasks)
 
     await health_server.start()
     try:
@@ -191,6 +219,8 @@ async def main() -> None:
         await health_server.close()
         await analysis_process_pool.close()
         await provider.close()
+        if execution_client is not None:
+            await execution_client.close()
         await ranking_provider.close()
         await engine.dispose()
 

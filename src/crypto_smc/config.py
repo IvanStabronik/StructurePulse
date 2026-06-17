@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     runtime_shutdown_timeout_seconds: float = Field(default=15, gt=0, le=120)
     event_loop_probe_interval_seconds: float = Field(default=0.5, ge=0.1, le=10)
     event_loop_warning_seconds: float = Field(default=0.25, gt=0, le=10)
-    required_database_revision: str = "0010"
+    required_database_revision: str = "0011"
     migration_lock_timeout_seconds: int = Field(default=15, ge=1, le=300)
     migration_statement_timeout_seconds: int = Field(default=120, ge=10, le=3600)
     maintenance_interval_seconds: float = Field(default=86_400, ge=60, le=604_800)
@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     execution_max_daily_loss_usdt: Decimal = Field(default=Decimal("10"), gt=0, le=100_000)
     execution_max_slippage_bps: Decimal = Field(default=Decimal("20"), ge=0, le=1000)
     execution_leverage: Decimal = Field(default=Decimal("1"), ge=1, le=100)
+    execution_poll_interval_seconds: float = Field(default=1, ge=0.2, le=30)
 
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_api_key: str | None = None

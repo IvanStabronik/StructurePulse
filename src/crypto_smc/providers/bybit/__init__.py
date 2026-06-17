@@ -3,6 +3,7 @@
 from crypto_smc.providers.bybit.client import BybitClient
 from crypto_smc.providers.bybit.private_client import (
     BybitOrderResult,
+    BybitPosition,
     BybitPrivateAPIError,
     BybitPrivateClient,
     WalletBalance,
@@ -17,6 +18,7 @@ __all__ = [
     "BybitClient",
     "BybitKlineWebSocketManager",
     "BybitOrderResult",
+    "BybitPosition",
     "BybitPrivateAPIError",
     "BybitPrivateClient",
     "BybitPublicTradeWebSocketManager",

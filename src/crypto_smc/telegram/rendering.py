@@ -53,6 +53,30 @@ def render_notification(
         title = "ВХОД АКТИВИРОВАН" if language == "ru" else "ENTRY FILLED"
         entry = "Вход" if language == "ru" else "Entry"
         return f"{title}: {symbol} {direction}\n{entry}: {_number(payload.get('planned_entry'))}"
+    if event_type in {
+        "live_entry_submitting",
+        "live_entry_open",
+        "live_tp1_reduced",
+        "live_position_closed",
+        "live_execution_failed",
+    }:
+        titles = {
+            "live_entry_submitting": "LIVE: SUBMITTING ORDER",
+            "live_entry_open": "LIVE: POSITION OPEN",
+            "live_tp1_reduced": "LIVE: TP1 HALF CLOSED",
+            "live_position_closed": "LIVE: POSITION CLOSED",
+            "live_execution_failed": "LIVE: EXECUTION FAILED",
+        }
+        lines = [
+            f"{titles[event_type]}: {symbol} {direction}",
+            f"Status: {payload.get('status', '?')}",
+            f"Qty: {_number(payload.get('qty'))}",
+            f"Remaining: {_number(payload.get('remaining_qty'))}",
+            f"Stop: {_number(payload.get('stop_loss'))}",
+        ]
+        if payload.get("error"):
+            lines.append(f"Error: {payload.get('error')}")
+        return "\n".join(lines)
     if event_type == "take_profit_1":
         title = "TP1 ДОСТИГНУТ" if language == "ru" else "TP1 REACHED"
         stop = "Стоп" if language == "ru" else "Stop"
