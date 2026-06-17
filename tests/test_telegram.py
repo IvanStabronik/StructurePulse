@@ -112,6 +112,23 @@ def test_notifications_render_in_russian_and_english() -> None:
     assert "LONG" in english
 
 
+def test_breakeven_result_mentions_tp1_before_be() -> None:
+    payload = delivery().payload | {
+        "status": "stopped_at_breakeven",
+        "realized_pnl": "28.9275",
+        "r_multiple": "0.2893",
+        "fees": "36.887",
+        "estimated_funding": "-0.082",
+    }
+
+    russian = render_notification("signal_result", payload, "ru")
+    english = render_notification("signal_result", payload, "en")
+
+    assert "TP1 + BE" in russian
+    assert "TP1 + BE" in english
+    assert "stopped_at_breakeven" not in english
+
+
 class FakeOutboxRepository:
     def __init__(self, pending: PendingDelivery) -> None:
         self.pending = pending

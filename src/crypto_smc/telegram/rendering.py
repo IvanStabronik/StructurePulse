@@ -124,13 +124,15 @@ def _direction(direction: str, language: str) -> str:
 
 def _status(status: str, language: str) -> str:
     if language != "ru":
-        return status
+        return {
+            "stopped_at_breakeven": "TP1 + BE",
+        }.get(status, status)
     return {
         "active": "активен",
         "entered": "в позиции",
         "tp1_reached": "TP1",
         "stopped": "стоп",
-        "stopped_at_breakeven": "безубыток",
+        "stopped_at_breakeven": "TP1 + BE",
         "tp2_completed": "TP2",
         "ambiguous": "неоднозначно",
         "coverage_failed": "нет надёжного покрытия",
