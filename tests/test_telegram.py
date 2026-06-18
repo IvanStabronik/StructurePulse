@@ -131,6 +131,19 @@ def test_breakeven_result_mentions_tp1_before_be() -> None:
     assert "stopped_at_breakeven" not in english
 
 
+def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None:
+    payload = delivery().payload | {
+        "status": "entry_submitting",
+        "qty": "0.69",
+        "stop_loss": "72.4335",
+    }
+
+    message = render_notification("live_entry_submitting", payload, "ru")
+
+    assert "Qty: 0.69" in message
+    assert "Remaining:" not in message
+
+
 class FakeOutboxRepository:
     def __init__(self, pending: PendingDelivery) -> None:
         self.pending = pending

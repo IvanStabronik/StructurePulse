@@ -71,9 +71,10 @@ def render_notification(
             f"{titles[event_type]}: {symbol} {direction}",
             f"Status: {payload.get('status', '?')}",
             f"Qty: {_number(payload.get('qty'))}",
-            f"Remaining: {_number(payload.get('remaining_qty'))}",
             f"Stop: {_number(payload.get('stop_loss'))}",
         ]
+        if payload.get("remaining_qty") is not None:
+            lines.insert(3, f"Remaining: {_number(payload.get('remaining_qty'))}")
         if payload.get("error"):
             lines.append(f"Error: {payload.get('error')}")
         return "\n".join(lines)
