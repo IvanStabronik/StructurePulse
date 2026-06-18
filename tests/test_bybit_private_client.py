@@ -134,6 +134,43 @@ async def test_place_market_order_signs_body_and_returns_order_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_set_linear_leverage_uses_position_endpoint() -> None:
+    seen_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_body
+        seen_body = json.loads(request.content.decode())
+        assert request.url.path == "/v5/position/set-leverage"
+        return httpx.Response(
+            200,
+            json={"retCode": 0, "retMsg": "OK", "result": {}, "time": 1},
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitPrivateClient(
+        base_url="https://unused.test",
+        api_key="test-key",
+        api_secret="test-secret",
+        timeout_seconds=1,
+        http_client=http_client,
+        timestamp_ms=lambda: 1,
+    )
+
+    await client.set_linear_leverage(symbol="ethusdt", leverage=Decimal("20"))
+    await http_client.aclose()
+
+    assert seen_body == {
+        "category": "linear",
+        "symbol": "ETHUSDT",
+        "buyLeverage": "20",
+        "sellLeverage": "20",
+    }
+
+
+@pytest.mark.asyncio
 async def test_set_full_position_stop_uses_trading_stop_endpoint() -> None:
     seen_body: dict[str, object] = {}
 

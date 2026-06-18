@@ -32,7 +32,7 @@ def test_settings_normalize_log_level() -> None:
 
 
 def test_signal_protection_defaults_are_bounded() -> None:
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.signal_cooldown_minutes == 60
     assert settings.signal_maximum_active == 5
@@ -55,6 +55,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_enabled is False
     assert settings.execution_mode == "disabled"
     assert settings.execution_order_budget_usdt == 50
+    assert settings.execution_risk_usdt == 50
     assert settings.execution_max_open_positions == 1
     assert settings.execution_max_trades_per_day == 2
     assert settings.execution_max_daily_loss_usdt == 10

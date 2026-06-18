@@ -137,6 +137,9 @@ def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None
     payload = delivery().payload | {
         "status": "entry_submitting",
         "qty": "0.69",
+        "risk_usdt": "50",
+        "notional_usdt": "8980.5",
+        "estimated_margin_usdt": "449.025",
         "stop_loss": "72.4335",
     }
 
@@ -144,6 +147,9 @@ def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None
 
     assert "Qty: 0.69" in message
     assert "Remaining:" not in message
+    assert "Risk: 50 USDT" in message
+    assert "Notional: 8980.5 USDT" in message
+    assert "Est. margin: 449.025 USDT" in message
 
 
 class FakeOutboxRepository:

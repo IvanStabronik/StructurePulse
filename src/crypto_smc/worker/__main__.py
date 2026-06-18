@@ -170,7 +170,8 @@ async def main() -> None:
         live_execution = LiveExecutionService(
             client=execution_client,
             session_factory=session_factory,
-            order_budget_usdt=settings.execution_order_budget_usdt,
+            risk_usdt=settings.execution_risk_usdt,
+            leverage=settings.execution_leverage,
             max_open_positions=settings.execution_max_open_positions,
             max_trades_per_day=settings.execution_max_trades_per_day,
             max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,

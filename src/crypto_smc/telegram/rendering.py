@@ -75,6 +75,12 @@ def render_notification(
         ]
         if payload.get("remaining_qty") is not None:
             lines.insert(3, f"Remaining: {_number(payload.get('remaining_qty'))}")
+        if payload.get("risk_usdt") is not None:
+            lines.insert(-1, f"Risk: {_number(payload.get('risk_usdt'))} USDT")
+        if payload.get("notional_usdt") is not None:
+            lines.insert(-1, f"Notional: {_number(payload.get('notional_usdt'))} USDT")
+        if payload.get("estimated_margin_usdt") is not None:
+            lines.insert(-1, f"Est. margin: {_number(payload.get('estimated_margin_usdt'))} USDT")
         if payload.get("error"):
             lines.append(f"Error: {payload.get('error')}")
         return "\n".join(lines)

@@ -2,7 +2,7 @@ from decimal import Decimal
 from typing import Any
 
 from crypto_smc.db.repositories.execution import LiveSignalView
-from crypto_smc.execution.service import LiveExecutionService, _quantity_for_budget
+from crypto_smc.execution.service import LiveExecutionService, _quantity_for_risk
 from crypto_smc.providers.bybit import BybitPosition, BybitPrivateAPIError
 
 
@@ -41,19 +41,20 @@ def signal_view(
     )
 
 
-def test_quantity_for_budget_rounds_down_to_exchange_step() -> None:
-    qty = _quantity_for_budget(
-        signal_view(planned_entry=Decimal("333.33"), quantity_step=Decimal("0.01")),
+def test_quantity_for_risk_uses_stop_distance_and_rounds_down_to_exchange_step() -> None:
+    qty = _quantity_for_risk(
+        signal_view(planned_entry=Decimal("100"), quantity_step=Decimal("0.01")),
         Decimal("50"),
     )
 
-    assert qty == Decimal("0.15")
+    assert qty == Decimal("10")
 
 
-def test_quantity_for_budget_rejects_too_small_order() -> None:
-    qty = _quantity_for_budget(
+def test_quantity_for_risk_rejects_too_small_order() -> None:
+    qty = _quantity_for_risk(
         signal_view(
-            planned_entry=Decimal("100000"),
+            planned_entry=Decimal("100"),
+            min_notional_value=Decimal("2000"),
             quantity_step=Decimal("0.001"),
             min_order_quantity=Decimal("0.001"),
         ),
@@ -111,7 +112,8 @@ async def test_close_marks_already_flat_position_closed_without_order() -> None:
     service = LiveExecutionService(
         client=client,  # type: ignore[arg-type]
         session_factory=None,  # type: ignore[arg-type]
-        order_budget_usdt=Decimal("50"),
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
         max_open_positions=1,
         max_trades_per_day=2,
         max_daily_loss_usdt=Decimal("10"),
@@ -147,7 +149,8 @@ async def test_close_treats_bybit_zero_position_error_as_closed() -> None:
     service = LiveExecutionService(
         client=client,  # type: ignore[arg-type]
         session_factory=None,  # type: ignore[arg-type]
-        order_budget_usdt=Decimal("50"),
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
         max_open_positions=1,
         max_trades_per_day=2,
         max_daily_loss_usdt=Decimal("10"),

@@ -143,6 +143,28 @@ class BybitPrivateClient:
             order_link_id=str(result.get("orderLinkId", "")),
         )
 
+    async def set_linear_leverage(
+        self,
+        *,
+        symbol: str,
+        leverage: Decimal,
+    ) -> None:
+        try:
+            await self._post(
+                "/v5/position/set-leverage",
+                body={
+                    "category": "linear",
+                    "symbol": symbol.upper(),
+                    "buyLeverage": _format_decimal(leverage),
+                    "sellLeverage": _format_decimal(leverage),
+                },
+            )
+        except BybitPrivateAPIError as exc:
+            message = str(exc).lower()
+            if "110043" in message or "leverage not modified" in message:
+                return
+            raise
+
     async def get_linear_position(self, *, symbol: str) -> BybitPosition | None:
         payload = await self._get(
             "/v5/position/list",

@@ -22,7 +22,8 @@ class LiveExecutionService:
         *,
         client: BybitPrivateClient,
         session_factory: async_sessionmaker[AsyncSession],
-        order_budget_usdt: Decimal,
+        risk_usdt: Decimal,
+        leverage: Decimal,
         max_open_positions: int,
         max_trades_per_day: int,
         max_daily_loss_usdt: Decimal,
@@ -31,7 +32,8 @@ class LiveExecutionService:
     ) -> None:
         self._client = client
         self._session_factory = session_factory
-        self._order_budget_usdt = order_budget_usdt
+        self._risk_usdt = risk_usdt
+        self._leverage = leverage
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
@@ -70,14 +72,17 @@ class LiveExecutionService:
 
     async def _enter(self, signal: LiveSignalView) -> None:
         now = datetime.now(UTC)
-        qty = _quantity_for_budget(signal, self._order_budget_usdt)
+        qty = _quantity_for_risk(signal, self._risk_usdt)
         if qty is None:
             return
+        notional = qty * signal.planned_entry
+        estimated_margin = notional / self._leverage
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
-            order_budget_usdt=self._order_budget_usdt,
+            risk_usdt=self._risk_usdt,
             qty=qty,
+            leverage=self._leverage,
             now=now,
             max_open_positions=self._max_open_positions,
             max_trades_per_day=self._max_trades_per_day,
@@ -90,11 +95,16 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         try:
             balance = await self._client.get_wallet_balance(coin="USDT")
-            if balance.total_available_balance < self._order_budget_usdt:
+            if balance.total_available_balance < estimated_margin:
                 raise RuntimeError(
                     f"available balance {balance.total_available_balance} is below "
-                    f"{self._order_budget_usdt} USDT budget"
+                    f"{estimated_margin} USDT estimated margin for "
+                    f"{self._risk_usdt} USDT risk at {self._leverage}x"
                 )
+            await self._client.set_linear_leverage(
+                symbol=signal.symbol,
+                leverage=self._leverage,
+            )
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
                 side=side,
@@ -243,10 +253,13 @@ class LiveExecutionService:
             await logger.aexception("live_execution_emergency_close_failed", symbol=symbol)
 
 
-def _quantity_for_budget(signal: LiveSignalView, budget: Decimal) -> Decimal | None:
+def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | None:
     if signal.planned_entry <= 0 or signal.quantity_step <= 0:
         return None
-    qty = _round_down(budget / signal.planned_entry, signal.quantity_step)
+    risk_per_unit = abs(signal.planned_entry - signal.stop_loss)
+    if risk_per_unit <= 0:
+        return None
+    qty = _round_down(risk_usdt / risk_per_unit, signal.quantity_step)
     if qty < signal.min_order_quantity:
         return None
     if qty * signal.planned_entry < signal.min_notional_value:

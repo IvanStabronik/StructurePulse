@@ -142,8 +142,9 @@ class LiveExecutionRepository:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         signal: LiveSignalView,
-        order_budget_usdt: Decimal,
+        risk_usdt: Decimal,
         qty: Decimal,
+        leverage: Decimal,
         now: datetime,
         max_open_positions: int,
         max_trades_per_day: int,
@@ -171,7 +172,7 @@ class LiveExecutionRepository:
                 symbol=signal.symbol,
                 direction=signal.direction,
                 status="entry_submitting",
-                order_budget_usdt=order_budget_usdt,
+                order_budget_usdt=risk_usdt,
                 entry_qty=qty,
                 remaining_qty=qty,
                 entry_price=signal.planned_entry,
@@ -188,7 +189,13 @@ class LiveExecutionRepository:
                 event_type="live_entry_submitting",
                 idempotency_key=f"live:{signal.signal_id}:entry_submitting",
                 now=now,
-                payload=_payload(signal, qty=qty, status="entry_submitting"),
+                payload=_payload(
+                    signal,
+                    qty=qty,
+                    status="entry_submitting",
+                    risk_usdt=risk_usdt,
+                    leverage=leverage,
+                ),
             )
             return record.id
 
@@ -363,13 +370,24 @@ class LiveExecutionRepository:
         )
 
 
-def _payload(signal: LiveSignalView, *, qty: Decimal, status: str) -> dict[str, object]:
+def _payload(
+    signal: LiveSignalView,
+    *,
+    qty: Decimal,
+    status: str,
+    risk_usdt: Decimal,
+    leverage: Decimal,
+) -> dict[str, object]:
+    notional = qty * signal.planned_entry
     return {
         "signal_id": signal.signal_id,
         "symbol": signal.symbol,
         "direction": signal.direction,
         "status": status,
         "qty": str(qty),
+        "risk_usdt": str(risk_usdt),
+        "notional_usdt": str(notional),
+        "estimated_margin_usdt": str(notional / leverage),
         "planned_entry": str(signal.planned_entry),
         "stop_loss": str(signal.stop_loss),
     }
@@ -383,6 +401,8 @@ def _live_payload(record: LiveExecutionRecord) -> dict[str, object]:
         "status": record.status,
         "qty": str(record.entry_qty),
         "remaining_qty": str(record.remaining_qty),
+        "risk_usdt": str(record.order_budget_usdt),
+        "notional_usdt": str(record.entry_qty * record.entry_price),
         "planned_entry": str(record.entry_price),
         "stop_loss": str(record.current_stop),
         "entry_order_id": record.entry_order_id or "",
