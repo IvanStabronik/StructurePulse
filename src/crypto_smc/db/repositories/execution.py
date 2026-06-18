@@ -291,6 +291,7 @@ class LiveExecutionRepository:
             record.close_order_id = order_id
             record.close_order_link_id = f"sp-{record.signal_id}-close"
             record.remaining_qty = Decimal(0)
+            record.error = None
             record.closed_at = now
             record.updated_at = now
             await self._notify(

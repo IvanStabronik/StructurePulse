@@ -11,7 +11,7 @@ from crypto_smc.db.repositories.execution import (
     LiveExecutionRepository,
     LiveSignalView,
 )
-from crypto_smc.providers.bybit import BybitPrivateClient
+from crypto_smc.providers.bybit import BybitPrivateAPIError, BybitPrivateClient
 
 logger = structlog.get_logger(__name__)
 
@@ -170,6 +170,16 @@ class LiveExecutionService:
         if qty is None or qty <= 0:
             return
         close_side = _close_side(signal.direction)
+        actual_qty = await self._live_position_size(signal.symbol)
+        if actual_qty <= 0:
+            await self._repository.mark_closed(
+                self._session_factory,
+                live_id=signal.live_id,
+                order_id="",
+                now=datetime.now(UTC),
+            )
+            return
+        qty = min(qty, actual_qty)
         try:
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
@@ -179,6 +189,14 @@ class LiveExecutionService:
                 reduce_only=True,
             )
         except Exception as exc:
+            if _is_already_flat_error(exc) or await self._live_position_size(signal.symbol) <= 0:
+                await self._repository.mark_closed(
+                    self._session_factory,
+                    live_id=signal.live_id,
+                    order_id="",
+                    now=datetime.now(UTC),
+                )
+                return
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=signal.live_id,
@@ -195,11 +213,17 @@ class LiveExecutionService:
 
     async def _position_size(self, symbol: str, *, fallback: Decimal) -> Decimal:
         for _ in range(5):
-            position = await self._client.get_linear_position(symbol=symbol)
-            if position is not None and position.size > 0:
-                return position.size
+            size = await self._live_position_size(symbol)
+            if size > 0:
+                return size
             await asyncio.sleep(0.5)
         return fallback
+
+    async def _live_position_size(self, symbol: str) -> Decimal:
+        position = await self._client.get_linear_position(symbol=symbol)
+        if position is None or position.size <= 0:
+            return Decimal(0)
+        return position.size
 
     async def _emergency_close(
         self,
@@ -242,3 +266,11 @@ def _entry_side(direction: str) -> Literal["Buy", "Sell"]:
 
 def _close_side(direction: str) -> Literal["Buy", "Sell"]:
     return "Sell" if direction == "long" else "Buy"
+
+
+def _is_already_flat_error(exc: Exception) -> bool:
+    return (
+        isinstance(exc, BybitPrivateAPIError)
+        and "110017" in str(exc)
+        and "position is zero" in str(exc).lower()
+    )
