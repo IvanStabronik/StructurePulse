@@ -128,6 +128,8 @@ def test_breakeven_result_mentions_tp1_before_be() -> None:
 
     assert "TP1 + BE" in russian
     assert "TP1 + BE" in english
+    assert "Virtual PnL: 28.9275 USDT" in russian
+    assert "Virtual PnL: 28.9275 USDT" in english
     assert "stopped_at_breakeven" not in english
 
 

@@ -81,7 +81,11 @@ def render_notification(
     if event_type == "take_profit_1":
         title = "TP1 ДОСТИГНУТ" if language == "ru" else "TP1 REACHED"
         stop = "Стоп" if language == "ru" else "Stop"
-        return f"{title}: {symbol}\n{stop}: BE\nPnL: {_number(payload.get('realized_pnl'))} USDT"
+        return (
+            f"{title}: {symbol}\n"
+            f"{stop}: BE\n"
+            f"Virtual PnL: {_number(payload.get('realized_pnl'))} USDT"
+        )
     if event_type == "signal_warning":
         title = "ПРЕДУПРЕЖДЕНИЕ" if language == "ru" else "WARNING"
         status_label = "Статус" if language == "ru" else "Status"
@@ -98,7 +102,7 @@ def render_notification(
         (
             f"{title}: {symbol} {direction}",
             f"{result_labels[0]}: {status}",
-            f"PnL: {_number(payload.get('realized_pnl'))} USDT",
+            f"Virtual PnL: {_number(payload.get('realized_pnl'))} USDT",
             f"R: {_number(payload.get('r_multiple'))}",
             f"{result_labels[1]}: {_number(payload.get('fees'))} USDT",
             f"{result_labels[2]}: {_number(payload.get('estimated_funding'))} USDT",
