@@ -31,9 +31,9 @@ def render_notification(
     if event_type == "new_signal":
         title = "НОВЫЙ СИГНАЛ" if language == "ru" else "NEW SIGNAL"
         labels = (
-            ("Оценка", "Вход", "Стоп", "Риск")
+            ("Оценка", "Вход", "Стоп", "Вирт. риск")
             if language == "ru"
-            else ("Score", "Entry", "Stop", "Risk")
+            else ("Score", "Entry", "Stop", "Virtual risk")
         )
         return "\n".join(
             (

@@ -108,8 +108,10 @@ def test_notifications_render_in_russian_and_english() -> None:
 
     assert "НОВЫЙ СИГНАЛ" in russian
     assert "ЛОНГ" in russian
+    assert "Вирт. риск: 100 USDT" in russian
     assert "NEW SIGNAL" in english
     assert "LONG" in english
+    assert "Virtual risk: 100 USDT" in english
 
 
 def test_breakeven_result_mentions_tp1_before_be() -> None:
