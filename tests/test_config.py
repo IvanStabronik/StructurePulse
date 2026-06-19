@@ -1,6 +1,8 @@
 from datetime import time
+from decimal import Decimal
 
 from crypto_smc.config import Settings
+from crypto_smc.worker.__main__ import _strategy_config
 
 
 def test_settings_parse_telegram_user_ids() -> None:
@@ -61,3 +63,14 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_max_trades_per_day == 2
     assert settings.execution_max_daily_loss_usdt == 10
     assert settings.execution_poll_interval_seconds == 1
+
+
+def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:
+    config = _strategy_config("aggressive_test", live_risk_usdt=Decimal("50"))
+
+    assert config.risk_amount == Decimal("50")
+    assert config.reference_balance == Decimal("5000")
+    assert config.version == "smc-v1.1.1-aggressive-test-risk-50"
+    assert config.require_15m_displacement is False
+    assert config.require_entry_zone_retest is False
+    assert config.ignore_active_evaluation_window is True

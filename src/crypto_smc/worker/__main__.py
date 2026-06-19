@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 
 from crypto_smc.aggregation.reconciliation import AggregationReconciliationService
 from crypto_smc.aggregation.service import AggregationService
@@ -118,7 +119,14 @@ async def main() -> None:
         max_workers=settings.strategy_process_workers,
         max_pending_batches=settings.strategy_max_pending_batches,
     )
-    strategy_config = _strategy_config(settings.strategy_profile)
+    strategy_config = _strategy_config(
+        settings.strategy_profile,
+        live_risk_usdt=(
+            settings.execution_risk_usdt
+            if settings.execution_enabled and settings.execution_mode == "auto"
+            else None
+        ),
+    )
     strategy_analysis = StrategyAnalysisService(
         ticker_provider=provider,
         session_factory=session_factory,
@@ -228,15 +236,23 @@ async def main() -> None:
         await ranking_provider.close()
         await engine.dispose()
 
-def _strategy_config(profile: str) -> StrategyConfig:
+def _strategy_config(profile: str, *, live_risk_usdt: Decimal | None = None) -> StrategyConfig:
     if profile == "aggressive_test":
+        risk_amount = live_risk_usdt or StrategyConfig().risk_amount
+        risk_fraction = Decimal("0.01")
         return StrategyConfig(
-            version="smc-v1.1.0-aggressive-test",
+            version=f"smc-v1.1.1-aggressive-test-risk-{_version_decimal(risk_amount)}",
             require_15m_displacement=False,
             require_entry_zone_retest=False,
             ignore_active_evaluation_window=True,
+            reference_balance=risk_amount / risk_fraction,
+            risk_fraction=risk_fraction,
         )
     return StrategyConfig()
+
+
+def _version_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f").replace(".", "p")
 
 
 if __name__ == "__main__":

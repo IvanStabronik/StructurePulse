@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crypto_smc.db.models import (
@@ -122,6 +122,13 @@ class LiveExecutionRepository:
                 select(func.count())
                 .select_from(LiveExecutionRecord)
                 .where(LiveExecutionRecord.created_at >= day_start)
+                .where(
+                    or_(
+                        LiveExecutionRecord.status != "failed",
+                        LiveExecutionRecord.entry_order_id.is_not(None),
+                        LiveExecutionRecord.entry_submitted_at.is_not(None),
+                    )
+                )
             )
             or 0
         )

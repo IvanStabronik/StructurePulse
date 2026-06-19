@@ -93,6 +93,7 @@ class LiveExecutionService:
 
         side = _entry_side(signal.direction)
         close_side = _close_side(signal.direction)
+        entry_order_submitted = False
         try:
             balance = await self._client.get_wallet_balance(coin="USDT")
             if balance.total_available_balance < estimated_margin:
@@ -111,13 +112,15 @@ class LiveExecutionService:
                 qty=qty,
                 order_link_id=f"sp-{signal.signal_id}-entry",
             )
+            entry_order_submitted = True
             actual_qty = await self._position_size(signal.symbol, fallback=qty)
             await self._client.set_full_position_stop(
                 symbol=signal.symbol,
                 stop_loss=signal.stop_loss,
             )
         except Exception as exc:
-            await self._emergency_close(signal.symbol, close_side, qty)
+            if entry_order_submitted:
+                await self._emergency_close(signal.symbol, close_side, qty)
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=live_id,

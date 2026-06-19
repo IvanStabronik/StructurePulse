@@ -12,6 +12,7 @@ def signal_view(
     direction: str = "long",
     signal_status: str = "entered",
     planned_entry: Decimal = Decimal("100"),
+    stop_loss: Decimal = Decimal("95"),
     quantity_step: Decimal = Decimal("0.001"),
     min_order_quantity: Decimal = Decimal("0.001"),
     max_market_order_quantity: Decimal = Decimal("1000"),
@@ -26,8 +27,8 @@ def signal_view(
         direction=direction,
         signal_status=signal_status,
         planned_entry=planned_entry,
-        stop_loss=Decimal("95"),
-        current_stop=Decimal("95"),
+        stop_loss=stop_loss,
+        current_stop=stop_loss,
         take_profit_1=Decimal("105"),
         take_profit_2=Decimal("110"),
         virtual_remaining_quantity=Decimal("1"),
@@ -104,6 +105,68 @@ class FakeCloseClient:
         if self.close_error is not None:
             raise self.close_error
         return type("Order", (), {"order_id": "close-order"})()
+
+
+class FakeEntryRepository:
+    def __init__(self) -> None:
+        self.failed_error: str | None = None
+        self.claims = 0
+
+    async def claim_entry(self, *_: object, **__: object) -> int:
+        self.claims += 1
+        return 7
+
+    async def mark_failed(self, *_: object, **kwargs: object) -> None:
+        self.failed_error = str(kwargs["error"])
+
+
+class FakeEntryClient:
+    def __init__(self, *, available_balance: Decimal) -> None:
+        self.available_balance = available_balance
+        self.orders = 0
+        self.leverage_updates = 0
+
+    async def get_wallet_balance(self, **_: object) -> Any:
+        return type("Balance", (), {"total_available_balance": self.available_balance})()
+
+    async def set_linear_leverage(self, **_: object) -> None:
+        self.leverage_updates += 1
+
+    async def place_market_order(self, **_: object) -> Any:
+        self.orders += 1
+        return type("Order", (), {"order_id": "entry-order"})()
+
+
+async def test_enter_margin_failure_does_not_emergency_close_flat_position() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(available_balance=Decimal("100"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("10"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._enter(
+        signal_view(
+            symbol="HYPEUSDT",
+            direction="long",
+            planned_entry=Decimal("69.8155"),
+            stop_loss=Decimal("69.4504"),
+            quantity_step=Decimal("0.01"),
+        )
+    )
+
+    assert repository.claims == 1
+    assert repository.failed_error is not None
+    assert "available balance 100 is below" in repository.failed_error
+    assert client.leverage_updates == 0
+    assert client.orders == 0
 
 
 async def test_close_marks_already_flat_position_closed_without_order() -> None:
