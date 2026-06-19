@@ -110,8 +110,10 @@ def _evaluate_direction(
             ),
         )
     )
-    if not has_displacement:
+    if not has_displacement and config.require_15m_displacement:
         suppression.append("missing_15m_structure_displacement")
+    elif not has_displacement:
+        warnings.append("missing_15m_structure_displacement")
 
     zone = _latest_entry_zone(strategy_input.analysis_15m, smc_direction)
     zone_score = 0
@@ -128,10 +130,16 @@ def _evaluate_direction(
     )
     if zone is None:
         suppression.append("missing_entry_zone")
+    elif (
+        zone[3] != "partially_filled"
+        and not (zone[1] <= strategy_input.market.current_price <= zone[2])
+        and config.require_entry_zone_retest
+    ):
+        suppression.append("entry_zone_not_retested")
     elif zone[3] != "partially_filled" and not (
         zone[1] <= strategy_input.market.current_price <= zone[2]
     ):
-        suppression.append("entry_zone_not_retested")
+        warnings.append("entry_zone_not_retested")
 
     location_matches = (
         strategy_input.analysis_4h.price_location == desired_location

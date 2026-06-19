@@ -28,6 +28,9 @@ class StrategyConfig:
     version: str = "smc-v1.0.0"
     smc: SMCConfig = field(default_factory=SMCConfig)
     weights: ScoreWeights = field(default_factory=ScoreWeights)
+    require_15m_displacement: bool = True
+    require_entry_zone_retest: bool = True
+    ignore_active_evaluation_window: bool = False
     minimum_score: int = 70
     strong_score: int = 85
     minimum_net_reward_to_risk: Decimal = Decimal(3)

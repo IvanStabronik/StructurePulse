@@ -210,6 +210,42 @@ def test_open_zone_must_be_retested_before_acceptance() -> None:
     assert "entry_zone_not_retested" in candidate.suppression_reasons
 
 
+def test_aggressive_test_treats_15m_displacement_and_retest_as_warnings() -> None:
+    source = strategy_input("bullish")
+    open_gap = replace(
+        source.analysis_15m.fair_value_gaps[0],
+        status="open",
+        first_touch_index=None,
+    )
+    modified_15m = analysis(
+        "15m",
+        "bullish",
+        zone=("90", "92"),
+        target="130",
+        include_sweep=True,
+        include_displacement=False,
+    )
+    modified = replace(
+        source,
+        analysis_15m=replace(modified_15m, fair_value_gaps=(open_gap,)),
+    )
+
+    candidate = evaluate_candidates(
+        modified,
+        StrategyConfig(
+            version="test-aggressive",
+            require_15m_displacement=False,
+            require_entry_zone_retest=False,
+        ),
+    )[0]
+
+    assert candidate.status == "accepted"
+    assert "missing_15m_structure_displacement" in candidate.warnings
+    assert "entry_zone_not_retested" in candidate.warnings
+    assert "missing_15m_structure_displacement" not in candidate.suppression_reasons
+    assert "entry_zone_not_retested" not in candidate.suppression_reasons
+
+
 def test_crowded_funding_and_abnormal_btc_reduce_score_and_add_warnings() -> None:
     source = strategy_input("bullish")
     modified = StrategyInput(

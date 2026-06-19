@@ -24,6 +24,7 @@ from crypto_smc.services.operational_warnings import OperationalWarningService
 from crypto_smc.services.universe_refresh import UniverseRefreshService
 from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.signals.service import SignalLifecycleService
+from crypto_smc.strategy import StrategyConfig
 from crypto_smc.universe import UniversePolicyConfig
 
 
@@ -117,6 +118,7 @@ async def main() -> None:
         max_workers=settings.strategy_process_workers,
         max_pending_batches=settings.strategy_max_pending_batches,
     )
+    strategy_config = _strategy_config(settings.strategy_profile)
     strategy_analysis = StrategyAnalysisService(
         ticker_provider=provider,
         session_factory=session_factory,
@@ -125,6 +127,7 @@ async def main() -> None:
         history_candles=settings.strategy_history_candles,
         minimum_history_candles=settings.strategy_minimum_history_candles,
         readiness_event=market_data_ready,
+        config=strategy_config,
         repository=StrategyRepository(
             signal_policy=SignalPolicyConfig(
                 cooldown_minutes=settings.signal_cooldown_minutes,
@@ -224,6 +227,16 @@ async def main() -> None:
             await execution_client.close()
         await ranking_provider.close()
         await engine.dispose()
+
+def _strategy_config(profile: str) -> StrategyConfig:
+    if profile == "aggressive_test":
+        return StrategyConfig(
+            version="smc-v1.1.0-aggressive-test",
+            require_15m_displacement=False,
+            require_entry_zone_retest=False,
+            ignore_active_evaluation_window=True,
+        )
+    return StrategyConfig()
 
 
 if __name__ == "__main__":

@@ -277,7 +277,11 @@ class StrategyRepository:
             )
             .where(EvaluationWindowRecord.status == "active")
         )
-        if frozen_version is not None and frozen_version != config.version:
+        if (
+            frozen_version is not None
+            and frozen_version != config.version
+            and not config.ignore_active_evaluation_window
+        ):
             raise ValueError(
                 f"Strategy version is frozen at {frozen_version} by the active evaluation window"
             )

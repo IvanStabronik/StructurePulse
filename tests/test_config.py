@@ -50,6 +50,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.runtime_shutdown_timeout_seconds == 15
     assert settings.maintenance_candle_1m_retention_days == 180
     assert settings.operational_warning_cooldown_seconds == 1800
+    assert settings.strategy_profile == "strict"
     assert settings.bybit_account_type == "UNIFIED"
     assert settings.bybit_recv_window_ms == 5000
     assert settings.execution_enabled is False
