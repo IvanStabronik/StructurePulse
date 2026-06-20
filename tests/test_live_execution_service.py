@@ -110,11 +110,17 @@ class FakeCloseClient:
 class FakeEntryRepository:
     def __init__(self) -> None:
         self.failed_error: str | None = None
+        self.rejected_error: str | None = None
         self.claims = 0
+        self.rejections = 0
 
     async def claim_entry(self, *_: object, **__: object) -> int:
         self.claims += 1
         return 7
+
+    async def reject_entry(self, *_: object, **kwargs: object) -> None:
+        self.rejections += 1
+        self.rejected_error = str(kwargs["error"])
 
     async def mark_failed(self, *_: object, **kwargs: object) -> None:
         self.failed_error = str(kwargs["error"])
@@ -162,9 +168,11 @@ async def test_enter_margin_failure_does_not_emergency_close_flat_position() -> 
         )
     )
 
-    assert repository.claims == 1
-    assert repository.failed_error is not None
-    assert "available balance 100 is below" in repository.failed_error
+    assert repository.claims == 0
+    assert repository.rejections == 1
+    assert repository.rejected_error is not None
+    assert "available balance 100 is below" in repository.rejected_error
+    assert repository.failed_error is None
     assert client.leverage_updates == 0
     assert client.orders == 0
 

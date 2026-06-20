@@ -141,8 +141,44 @@ class LiveExecutionRepository:
             .join(VirtualTradeRecord, VirtualTradeRecord.signal_id == LiveExecutionRecord.signal_id)
             .where(LiveExecutionRecord.created_at >= day_start)
             .where(LiveExecutionRecord.status.in_({"closed", "failed"}))
+            .where(
+                or_(
+                    LiveExecutionRecord.status != "failed",
+                    LiveExecutionRecord.entry_order_id.is_not(None),
+                    LiveExecutionRecord.entry_submitted_at.is_not(None),
+                )
+            )
         )
         return Decimal(str(total or 0))
+
+    async def reject_entry(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        signal: LiveSignalView,
+        risk_usdt: Decimal,
+        qty: Decimal,
+        leverage: Decimal,
+        error: str,
+        now: datetime,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            existing = await session.scalar(
+                select(LiveExecutionRecord).where(
+                    LiveExecutionRecord.signal_id == signal.signal_id
+                )
+            )
+            if existing is not None:
+                return
+            await self._reject_entry_record(
+                session,
+                signal=signal,
+                risk_usdt=risk_usdt,
+                qty=qty,
+                leverage=leverage,
+                error=error,
+                now=now,
+            )
 
     async def claim_entry(
         self,
@@ -168,10 +204,37 @@ class LiveExecutionRepository:
             if existing is not None:
                 return None
             if await self.open_live_count(session) >= max_open_positions:
+                await self._reject_entry_record(
+                    session,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error=f"max open live positions reached: {max_open_positions}",
+                    now=now,
+                )
                 return None
             if await self.todays_trade_count(session, now=now) >= max_trades_per_day:
+                await self._reject_entry_record(
+                    session,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error=f"max live trades per day reached: {max_trades_per_day}",
+                    now=now,
+                )
                 return None
             if await self.todays_virtual_pnl(session, now=now) <= -max_daily_loss_usdt:
+                await self._reject_entry_record(
+                    session,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error=f"max live daily loss reached: {max_daily_loss_usdt} USDT",
+                    now=now,
+                )
                 return None
 
             record = LiveExecutionRecord(
@@ -205,6 +268,49 @@ class LiveExecutionRepository:
                 ),
             )
             return record.id
+
+    async def _reject_entry_record(
+        self,
+        session: AsyncSession,
+        *,
+        signal: LiveSignalView,
+        risk_usdt: Decimal,
+        qty: Decimal,
+        leverage: Decimal,
+        error: str,
+        now: datetime,
+    ) -> None:
+        record = LiveExecutionRecord(
+            signal_id=signal.signal_id,
+            symbol=signal.symbol,
+            direction=signal.direction,
+            status="failed",
+            order_budget_usdt=risk_usdt,
+            entry_qty=qty,
+            remaining_qty=qty,
+            entry_price=signal.planned_entry,
+            current_stop=signal.stop_loss,
+            error=error[:2000],
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+        await session.flush()
+        await self._notify(
+            session,
+            signal_id=signal.signal_id,
+            event_type="live_execution_failed",
+            idempotency_key=f"live:{signal.signal_id}:failed:{record.id}",
+            now=now,
+            payload=_payload(
+                signal,
+                qty=qty,
+                status="failed",
+                risk_usdt=risk_usdt,
+                leverage=leverage,
+            )
+            | {"error": record.error},
+        )
 
     async def mark_entry_open(
         self,

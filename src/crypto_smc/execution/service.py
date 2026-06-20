@@ -77,6 +77,22 @@ class LiveExecutionService:
             return
         notional = qty * signal.planned_entry
         estimated_margin = notional / self._leverage
+        balance = await self._client.get_wallet_balance(coin="USDT")
+        if balance.total_available_balance < estimated_margin:
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=self._risk_usdt,
+                qty=qty,
+                leverage=self._leverage,
+                error=(
+                    f"available balance {balance.total_available_balance} is below "
+                    f"{estimated_margin} USDT estimated margin for "
+                    f"{self._risk_usdt} USDT risk at {self._leverage}x"
+                ),
+                now=now,
+            )
+            return
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
@@ -95,13 +111,6 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         entry_order_submitted = False
         try:
-            balance = await self._client.get_wallet_balance(coin="USDT")
-            if balance.total_available_balance < estimated_margin:
-                raise RuntimeError(
-                    f"available balance {balance.total_available_balance} is below "
-                    f"{estimated_margin} USDT estimated margin for "
-                    f"{self._risk_usdt} USDT risk at {self._leverage}x"
-                )
             await self._client.set_linear_leverage(
                 symbol=signal.symbol,
                 leverage=self._leverage,

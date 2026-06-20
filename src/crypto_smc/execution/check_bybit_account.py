@@ -13,6 +13,7 @@ async def main() -> None:
     print(f"Leverage: {settings.execution_leverage}x")
     print(f"Max open positions: {settings.execution_max_open_positions}")
     print(f"Max trades per day: {settings.execution_max_trades_per_day}")
+    print(f"Max daily loss: {settings.execution_max_daily_loss_usdt} USDT")
 
     if not settings.bybit_api_key or not settings.bybit_api_secret:
         print("Bybit credentials: missing")
