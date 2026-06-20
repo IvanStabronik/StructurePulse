@@ -45,6 +45,7 @@ class LiveSignalView:
     min_order_quantity: Decimal
     max_market_order_quantity: Decimal
     min_notional_value: Decimal
+    max_leverage: Decimal
     live_id: int | None
     live_status: str | None
     live_remaining_qty: Decimal | None
@@ -98,6 +99,7 @@ class LiveExecutionRepository:
                 min_order_quantity=instrument.min_order_quantity,
                 max_market_order_quantity=instrument.max_market_order_quantity,
                 min_notional_value=instrument.min_notional_value,
+                max_leverage=instrument.max_leverage,
                 live_id=live.id if live is not None else None,
                 live_status=live.status if live is not None else None,
                 live_remaining_qty=live.remaining_qty if live is not None else None,
@@ -499,6 +501,7 @@ def _payload(
         "status": status,
         "qty": str(qty),
         "risk_usdt": str(risk_usdt),
+        "leverage": str(leverage),
         "notional_usdt": str(notional),
         "estimated_margin_usdt": str(notional / leverage),
         "planned_entry": str(signal.planned_entry),

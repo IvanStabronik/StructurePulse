@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from typing import Literal
 
 import structlog
@@ -14,6 +14,7 @@ from crypto_smc.db.repositories.execution import (
 from crypto_smc.providers.bybit import BybitPrivateAPIError, BybitPrivateClient
 
 logger = structlog.get_logger(__name__)
+MARGIN_USAGE_LIMIT = Decimal("0.95")
 
 
 class LiveExecutionService:
@@ -76,19 +77,44 @@ class LiveExecutionService:
         if qty is None:
             return
         notional = qty * signal.planned_entry
-        estimated_margin = notional / self._leverage
         balance = await self._client.get_wallet_balance(coin="USDT")
+        leverage = _select_leverage(
+            notional=notional,
+            configured_leverage=self._leverage,
+            instrument_max_leverage=signal.max_leverage,
+            available_balance=balance.total_available_balance,
+        )
+        if leverage is None:
+            max_usable_margin = balance.total_available_balance * MARGIN_USAGE_LIMIT
+            max_leverage = max(Decimal(1), signal.max_leverage)
+            estimated_margin = notional / max_leverage
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=self._risk_usdt,
+                qty=qty,
+                leverage=max_leverage,
+                error=(
+                    f"available balance {balance.total_available_balance} cannot cover "
+                    f"{estimated_margin} USDT estimated margin for {self._risk_usdt} USDT risk "
+                    f"even at {max_leverage}x max leverage; usable margin limit is "
+                    f"{max_usable_margin} USDT"
+                ),
+                now=now,
+            )
+            return
+        estimated_margin = notional / leverage
         if balance.total_available_balance < estimated_margin:
             await self._repository.reject_entry(
                 self._session_factory,
                 signal=signal,
                 risk_usdt=self._risk_usdt,
                 qty=qty,
-                leverage=self._leverage,
+                leverage=leverage,
                 error=(
                     f"available balance {balance.total_available_balance} is below "
                     f"{estimated_margin} USDT estimated margin for "
-                    f"{self._risk_usdt} USDT risk at {self._leverage}x"
+                    f"{self._risk_usdt} USDT risk at {leverage}x"
                 ),
                 now=now,
             )
@@ -98,7 +124,7 @@ class LiveExecutionService:
             signal=signal,
             risk_usdt=self._risk_usdt,
             qty=qty,
-            leverage=self._leverage,
+            leverage=leverage,
             now=now,
             max_open_positions=self._max_open_positions,
             max_trades_per_day=self._max_trades_per_day,
@@ -113,7 +139,7 @@ class LiveExecutionService:
         try:
             await self._client.set_linear_leverage(
                 symbol=signal.symbol,
-                leverage=self._leverage,
+                leverage=leverage,
             )
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
@@ -279,6 +305,25 @@ def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | 
     if qty > signal.max_market_order_quantity:
         qty = _round_down(signal.max_market_order_quantity, signal.quantity_step)
     return qty if qty > 0 else None
+
+
+def _select_leverage(
+    *,
+    notional: Decimal,
+    configured_leverage: Decimal,
+    instrument_max_leverage: Decimal,
+    available_balance: Decimal,
+) -> Decimal | None:
+    if notional <= 0 or available_balance <= 0 or instrument_max_leverage < 1:
+        return None
+    max_usable_margin = available_balance * MARGIN_USAGE_LIMIT
+    if max_usable_margin <= 0:
+        return None
+    required = (notional / max_usable_margin).to_integral_value(rounding=ROUND_CEILING)
+    selected = max(Decimal(1), configured_leverage, required)
+    if selected > instrument_max_leverage:
+        return None
+    return selected
 
 
 def _round_down(value: Decimal, step: Decimal) -> Decimal:

@@ -50,7 +50,7 @@ def render_notification(
             )
         )
     if event_type == "entry_filled":
-        title = "ВХОД АКТИВИРОВАН" if language == "ru" else "ENTRY FILLED"
+        title = "ВИРТУАЛЬНЫЙ ВХОД" if language == "ru" else "VIRTUAL ENTRY"
         entry = "Вход" if language == "ru" else "Entry"
         return f"{title}: {symbol} {direction}\n{entry}: {_number(payload.get('planned_entry'))}"
     if event_type in {
@@ -77,6 +77,8 @@ def render_notification(
             lines.insert(3, f"Remaining: {_number(payload.get('remaining_qty'))}")
         if payload.get("risk_usdt") is not None:
             lines.insert(-1, f"Risk: {_number(payload.get('risk_usdt'))} USDT")
+        if payload.get("leverage") is not None:
+            lines.insert(-1, f"Leverage: {_number(payload.get('leverage'))}x")
         if payload.get("notional_usdt") is not None:
             lines.insert(-1, f"Notional: {_number(payload.get('notional_usdt'))} USDT")
         if payload.get("estimated_margin_usdt") is not None:
@@ -85,7 +87,7 @@ def render_notification(
             lines.append(f"Error: {payload.get('error')}")
         return "\n".join(lines)
     if event_type == "take_profit_1":
-        title = "TP1 ДОСТИГНУТ" if language == "ru" else "TP1 REACHED"
+        title = "ВИРТУАЛЬНЫЙ TP1" if language == "ru" else "VIRTUAL TP1"
         stop = "Стоп" if language == "ru" else "Stop"
         return (
             f"{title}: {symbol}\n"
@@ -100,7 +102,7 @@ def render_notification(
         title = "СИГНАЛ ЗАКРЫТ" if language == "ru" else "SIGNAL CLOSED"
         status_label = "Статус" if language == "ru" else "Status"
         return f"{title}: {symbol}\n{status_label}: {status}"
-    title = "РЕЗУЛЬТАТ" if language == "ru" else "RESULT"
+    title = "ВИРТУАЛЬНЫЙ РЕЗУЛЬТАТ" if language == "ru" else "VIRTUAL RESULT"
     result_labels = (
         ("Статус", "Комиссии", "Фандинг") if language == "ru" else ("Status", "Fees", "Funding")
     )
