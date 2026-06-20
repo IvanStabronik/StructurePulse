@@ -55,6 +55,10 @@ class PublicTradeStream(Protocol):
     async def stop(self) -> None: ...
 
 
+class LiveExecutionTrigger(Protocol):
+    async def handle_signal_id(self, signal_id: int) -> None: ...
+
+
 class FallbackCandleRepository(Protocol):
     async def load_reconciled_1m_window(
         self,
@@ -79,6 +83,7 @@ class SignalLifecycleService:
         checkpoint_interval_seconds: float,
         repository: SignalRepository | None = None,
         fallback_repository: FallbackCandleRepository | None = None,
+        live_execution: LiveExecutionTrigger | None = None,
     ) -> None:
         self._provider = provider
         self._stream = stream
@@ -88,6 +93,7 @@ class SignalLifecycleService:
         self._checkpoint_interval_seconds = checkpoint_interval_seconds
         self._repository = repository or SignalRepository()
         self._fallback_repository = fallback_repository or MarketDataRepository()
+        self._live_execution = live_execution
         self._signals: dict[str, TrackingSignalView] = {}
         self._coverage_pending: dict[str, datetime] = {}
         self._last_checkpoint: dict[str, float] = {}
@@ -428,6 +434,18 @@ class SignalLifecycleService:
         if not result.applied:
             await self._refresh_signal(signal.symbol)
             return
+        if self._live_execution is not None and target in {
+            "entered",
+            "tp1_reached",
+            "stopped",
+            "stopped_at_breakeven",
+            "tp2_completed",
+            "ambiguous",
+            "coverage_failed",
+            "expired",
+            "invalidated",
+        }:
+            await self._live_execution.handle_signal_id(signal.id)
         terminal = target in {
             "expired",
             "invalidated",

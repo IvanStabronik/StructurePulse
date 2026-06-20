@@ -2,7 +2,12 @@ from decimal import Decimal
 from typing import Any
 
 from crypto_smc.db.repositories.execution import LiveSignalView
-from crypto_smc.execution.service import LiveExecutionService, _quantity_for_risk, _select_leverage
+from crypto_smc.execution.service import (
+    LiveExecutionService,
+    _quantity_for_risk,
+    _risk_for_available_margin,
+    _select_leverage,
+)
 from crypto_smc.providers.bybit import BybitPosition, BybitPrivateAPIError
 
 
@@ -87,6 +92,38 @@ def test_select_leverage_rejects_when_instrument_max_is_too_low() -> None:
     )
 
     assert leverage is None
+
+
+def test_risk_for_available_margin_downsizes_without_going_below_floor() -> None:
+    risk = _risk_for_available_margin(
+        signal_view(
+            symbol="LABUSDT",
+            planned_entry=Decimal("13.679"),
+            stop_loss=Decimal("13.739782097674856170"),
+            max_leverage=Decimal("20"),
+        ),
+        target_risk_usdt=Decimal("50"),
+        min_risk_usdt=Decimal("20"),
+        available_balance=Decimal("239.18"),
+    )
+
+    assert risk == Decimal("20.19")
+
+
+def test_risk_for_available_margin_rejects_below_floor() -> None:
+    risk = _risk_for_available_margin(
+        signal_view(
+            symbol="XLMUSDT",
+            planned_entry=Decimal("0.214185"),
+            stop_loss=Decimal("0.214447347159921614"),
+            max_leverage=Decimal("50"),
+        ),
+        target_risk_usdt=Decimal("50"),
+        min_risk_usdt=Decimal("20"),
+        available_balance=Decimal("239.18"),
+    )
+
+    assert risk is None
 
 
 class FakeCloseRepository:
@@ -218,7 +255,7 @@ async def test_enter_margin_failure_does_not_emergency_close_flat_position() -> 
     assert repository.claims == 0
     assert repository.rejections == 1
     assert repository.rejected_error is not None
-    assert "available balance 100 cannot cover" in repository.rejected_error
+    assert "available balance 100 cannot support minimum live risk 20" in repository.rejected_error
     assert repository.failed_error is None
     assert client.leverage_updates == 0
     assert client.orders == 0

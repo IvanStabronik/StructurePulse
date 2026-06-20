@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -59,52 +60,76 @@ class LiveExecutionRepository:
         async with session_factory() as session:
             rows = (
                 await session.execute(
-                    select(
-                        SignalRecord,
-                        VirtualTradeRecord,
-                        InstrumentRecord,
-                        LiveExecutionRecord,
+                    self._actionable_statement().order_by(
+                        SignalRecord.created_at,
+                        SignalRecord.id,
                     )
-                    .join(VirtualTradeRecord, VirtualTradeRecord.signal_id == SignalRecord.id)
-                    .join(InstrumentRecord, InstrumentRecord.symbol == SignalRecord.symbol)
-                    .outerjoin(
-                        LiveExecutionRecord,
-                        LiveExecutionRecord.signal_id == SignalRecord.id,
-                    )
-                    .where(
-                        SignalRecord.status.in_(
-                            {
-                                "entered",
-                                "tp1_reached",
-                                *TERMINAL_SIGNAL_STATUSES,
-                            }
-                        )
-                    )
-                    .order_by(SignalRecord.created_at, SignalRecord.id)
                 )
             ).all()
-        return tuple(
-            LiveSignalView(
-                signal_id=signal.id,
-                symbol=signal.symbol,
-                direction=signal.direction,
-                signal_status=signal.status,
-                planned_entry=signal.planned_entry,
-                stop_loss=signal.stop_loss,
-                current_stop=trade.current_stop,
-                take_profit_1=signal.take_profit_1,
-                take_profit_2=signal.take_profit_2,
-                virtual_remaining_quantity=trade.remaining_quantity,
-                quantity_step=instrument.quantity_step,
-                min_order_quantity=instrument.min_order_quantity,
-                max_market_order_quantity=instrument.max_market_order_quantity,
-                min_notional_value=instrument.min_notional_value,
-                max_leverage=instrument.max_leverage,
-                live_id=live.id if live is not None else None,
-                live_status=live.status if live is not None else None,
-                live_remaining_qty=live.remaining_qty if live is not None else None,
+        return tuple(self._view(row) for row in rows)
+
+    async def get_actionable(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        signal_id: int,
+    ) -> LiveSignalView | None:
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    self._actionable_statement().where(SignalRecord.id == signal_id)
+                )
+            ).one_or_none()
+        return self._view(row) if row is not None else None
+
+    @staticmethod
+    def _actionable_statement() -> Any:
+        return (
+            select(
+                SignalRecord,
+                VirtualTradeRecord,
+                InstrumentRecord,
+                LiveExecutionRecord,
             )
-            for signal, trade, instrument, live in rows
+            .join(VirtualTradeRecord, VirtualTradeRecord.signal_id == SignalRecord.id)
+            .join(InstrumentRecord, InstrumentRecord.symbol == SignalRecord.symbol)
+            .outerjoin(
+                LiveExecutionRecord,
+                LiveExecutionRecord.signal_id == SignalRecord.id,
+            )
+            .where(
+                SignalRecord.status.in_(
+                    {
+                        "entered",
+                        "tp1_reached",
+                        *TERMINAL_SIGNAL_STATUSES,
+                    }
+                )
+            )
+        )
+
+    @staticmethod
+    def _view(row: Any) -> LiveSignalView:
+        signal, trade, instrument, live = row
+        return LiveSignalView(
+            signal_id=signal.id,
+            symbol=signal.symbol,
+            direction=signal.direction,
+            signal_status=signal.status,
+            planned_entry=signal.planned_entry,
+            stop_loss=signal.stop_loss,
+            current_stop=trade.current_stop,
+            take_profit_1=signal.take_profit_1,
+            take_profit_2=signal.take_profit_2,
+            virtual_remaining_quantity=trade.remaining_quantity,
+            quantity_step=instrument.quantity_step,
+            min_order_quantity=instrument.min_order_quantity,
+            max_market_order_quantity=instrument.max_market_order_quantity,
+            min_notional_value=instrument.min_notional_value,
+            max_leverage=instrument.max_leverage,
+            live_id=live.id if live is not None else None,
+            live_status=live.status if live is not None else None,
+            live_remaining_qty=live.remaining_qty if live is not None else None,
         )
 
     async def open_live_count(self, session: AsyncSession) -> int:
@@ -166,9 +191,7 @@ class LiveExecutionRepository:
     ) -> None:
         async with session_factory() as session, session.begin():
             existing = await session.scalar(
-                select(LiveExecutionRecord).where(
-                    LiveExecutionRecord.signal_id == signal.signal_id
-                )
+                select(LiveExecutionRecord).where(LiveExecutionRecord.signal_id == signal.signal_id)
             )
             if existing is not None:
                 return
@@ -199,9 +222,7 @@ class LiveExecutionRepository:
             if signal.signal_status != "entered":
                 return None
             existing = await session.scalar(
-                select(LiveExecutionRecord).where(
-                    LiveExecutionRecord.signal_id == signal.signal_id
-                )
+                select(LiveExecutionRecord).where(LiveExecutionRecord.signal_id == signal.signal_id)
             )
             if existing is not None:
                 return None

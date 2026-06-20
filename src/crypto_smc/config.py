@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     execution_mode: Literal["disabled", "approval", "auto"] = "disabled"
     execution_order_budget_usdt: Decimal = Field(default=Decimal("50"), gt=0, le=100_000)
     execution_risk_usdt: Decimal = Field(default=Decimal("50"), gt=0, le=100_000)
+    execution_min_risk_usdt: Decimal = Field(default=Decimal("20"), gt=0, le=100_000)
     execution_max_open_positions: int = Field(default=1, ge=1, le=30)
     execution_max_trades_per_day: int = Field(default=2, ge=1, le=100)
     execution_max_daily_loss_usdt: Decimal = Field(default=Decimal("10"), gt=0, le=100_000)

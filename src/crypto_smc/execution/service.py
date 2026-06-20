@@ -29,11 +29,13 @@ class LiveExecutionService:
         max_trades_per_day: int,
         max_daily_loss_usdt: Decimal,
         poll_interval_seconds: float,
+        min_risk_usdt: Decimal = Decimal("20"),
         repository: LiveExecutionRepository | None = None,
     ) -> None:
         self._client = client
         self._session_factory = session_factory
         self._risk_usdt = risk_usdt
+        self._min_risk_usdt = min(min_risk_usdt, risk_usdt)
         self._leverage = leverage
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
@@ -57,6 +59,15 @@ class LiveExecutionService:
                     symbol=signal.symbol,
                 )
 
+    async def handle_signal_id(self, signal_id: int) -> None:
+        signal = await self._repository.get_actionable(
+            self._session_factory,
+            signal_id=signal_id,
+        )
+        if signal is None:
+            return
+        await self._handle(signal)
+
     async def _handle(self, signal: LiveSignalView) -> None:
         if signal.live_id is None:
             if signal.signal_status == "entered":
@@ -73,11 +84,31 @@ class LiveExecutionService:
 
     async def _enter(self, signal: LiveSignalView) -> None:
         now = datetime.now(UTC)
-        qty = _quantity_for_risk(signal, self._risk_usdt)
+        balance = await self._client.get_wallet_balance(coin="USDT")
+        risk_usdt = _risk_for_available_margin(
+            signal,
+            target_risk_usdt=self._risk_usdt,
+            min_risk_usdt=self._min_risk_usdt,
+            available_balance=balance.total_available_balance,
+        )
+        if risk_usdt is None:
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=self._risk_usdt,
+                qty=Decimal(0),
+                leverage=max(Decimal(1), signal.max_leverage),
+                error=(
+                    f"available balance {balance.total_available_balance} cannot support "
+                    f"minimum live risk {self._min_risk_usdt} USDT for this setup"
+                ),
+                now=now,
+            )
+            return
+        qty = _quantity_for_risk(signal, risk_usdt)
         if qty is None:
             return
         notional = qty * signal.planned_entry
-        balance = await self._client.get_wallet_balance(coin="USDT")
         leverage = _select_leverage(
             notional=notional,
             configured_leverage=self._leverage,
@@ -91,12 +122,12 @@ class LiveExecutionService:
             await self._repository.reject_entry(
                 self._session_factory,
                 signal=signal,
-                risk_usdt=self._risk_usdt,
+                risk_usdt=risk_usdt,
                 qty=qty,
                 leverage=max_leverage,
                 error=(
                     f"available balance {balance.total_available_balance} cannot cover "
-                    f"{estimated_margin} USDT estimated margin for {self._risk_usdt} USDT risk "
+                    f"{estimated_margin} USDT estimated margin for {risk_usdt} USDT risk "
                     f"even at {max_leverage}x max leverage; usable margin limit is "
                     f"{max_usable_margin} USDT"
                 ),
@@ -108,13 +139,13 @@ class LiveExecutionService:
             await self._repository.reject_entry(
                 self._session_factory,
                 signal=signal,
-                risk_usdt=self._risk_usdt,
+                risk_usdt=risk_usdt,
                 qty=qty,
                 leverage=leverage,
                 error=(
                     f"available balance {balance.total_available_balance} is below "
                     f"{estimated_margin} USDT estimated margin for "
-                    f"{self._risk_usdt} USDT risk at {leverage}x"
+                    f"{risk_usdt} USDT risk at {leverage}x"
                 ),
                 now=now,
             )
@@ -122,7 +153,7 @@ class LiveExecutionService:
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
-            risk_usdt=self._risk_usdt,
+            risk_usdt=risk_usdt,
             qty=qty,
             leverage=leverage,
             now=now,
@@ -305,6 +336,27 @@ def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | 
     if qty > signal.max_market_order_quantity:
         qty = _round_down(signal.max_market_order_quantity, signal.quantity_step)
     return qty if qty > 0 else None
+
+
+def _risk_for_available_margin(
+    signal: LiveSignalView,
+    *,
+    target_risk_usdt: Decimal,
+    min_risk_usdt: Decimal,
+    available_balance: Decimal,
+) -> Decimal | None:
+    if target_risk_usdt <= 0 or min_risk_usdt <= 0 or available_balance <= 0:
+        return None
+    risk_per_unit = abs(signal.planned_entry - signal.stop_loss)
+    if risk_per_unit <= 0 or signal.planned_entry <= 0 or signal.max_leverage < 1:
+        return None
+    max_usable_notional = available_balance * MARGIN_USAGE_LIMIT * signal.max_leverage
+    max_risk = max_usable_notional * risk_per_unit / signal.planned_entry
+    selected = min(target_risk_usdt, max_risk)
+    selected = selected.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+    if selected < min_risk_usdt:
+        return None
+    return selected
 
 
 def _select_leverage(

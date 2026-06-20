@@ -10,6 +10,7 @@ async def main() -> None:
     print(f"Execution enabled: {settings.execution_enabled}")
     print(f"Execution mode: {settings.execution_mode}")
     print(f"Risk per trade: {settings.execution_risk_usdt} USDT")
+    print(f"Minimum adaptive risk: {settings.execution_min_risk_usdt} USDT")
     print(f"Leverage: {settings.execution_leverage}x")
     print(f"Max open positions: {settings.execution_max_open_positions}")
     print(f"Max trades per day: {settings.execution_max_trades_per_day}")

@@ -156,14 +156,6 @@ async def main() -> None:
         reconnect_max_seconds=settings.bybit_ws_reconnect_max_seconds,
         ready_timeout_seconds=settings.bybit_ws_ready_timeout_seconds,
     )
-    signal_lifecycle = SignalLifecycleService(
-        provider=provider,
-        stream=public_trade_stream,
-        session_factory=session_factory,
-        poll_interval_seconds=settings.signal_trade_poll_interval_seconds,
-        recent_trade_limit=settings.signal_trade_recent_limit,
-        checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
-    )
     execution_client: BybitPrivateClient | None = None
     live_execution: LiveExecutionService | None = None
     if settings.execution_enabled and settings.execution_mode == "auto":
@@ -183,11 +175,21 @@ async def main() -> None:
             session_factory=session_factory,
             risk_usdt=settings.execution_risk_usdt,
             leverage=settings.execution_leverage,
+            min_risk_usdt=settings.execution_min_risk_usdt,
             max_open_positions=settings.execution_max_open_positions,
             max_trades_per_day=settings.execution_max_trades_per_day,
             max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,
             poll_interval_seconds=settings.execution_poll_interval_seconds,
         )
+    signal_lifecycle = SignalLifecycleService(
+        provider=provider,
+        stream=public_trade_stream,
+        session_factory=session_factory,
+        poll_interval_seconds=settings.signal_trade_poll_interval_seconds,
+        recent_trade_limit=settings.signal_trade_recent_limit,
+        checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
+        live_execution=live_execution,
+    )
     maintenance = MaintenanceService(
         session_factory=session_factory,
         interval_seconds=settings.maintenance_interval_seconds,
@@ -235,6 +237,7 @@ async def main() -> None:
             await execution_client.close()
         await ranking_provider.close()
         await engine.dispose()
+
 
 def _strategy_config(profile: str, *, live_risk_usdt: Decimal | None = None) -> StrategyConfig:
     if profile == "aggressive_test":

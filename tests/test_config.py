@@ -59,6 +59,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_mode == "disabled"
     assert settings.execution_order_budget_usdt == 50
     assert settings.execution_risk_usdt == 50
+    assert settings.execution_min_risk_usdt == 20
     assert settings.execution_max_open_positions == 1
     assert settings.execution_max_trades_per_day == 2
     assert settings.execution_max_daily_loss_usdt == 10
