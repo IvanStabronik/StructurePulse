@@ -78,6 +78,7 @@ def test_select_leverage_raises_to_fit_available_margin() -> None:
         configured_leverage=Decimal("20"),
         instrument_max_leverage=Decimal("100"),
         available_balance=Decimal("239.18205325"),
+        max_effective_leverage=Decimal("100"),
     )
 
     assert leverage == Decimal("94")
@@ -89,6 +90,19 @@ def test_select_leverage_rejects_when_instrument_max_is_too_low() -> None:
         configured_leverage=Decimal("20"),
         instrument_max_leverage=Decimal("50"),
         available_balance=Decimal("239.18205325"),
+        max_effective_leverage=Decimal("50"),
+    )
+
+    assert leverage is None
+
+
+def test_select_leverage_respects_effective_cap() -> None:
+    leverage = _select_leverage(
+        notional=Decimal("21346.917"),
+        configured_leverage=Decimal("20"),
+        instrument_max_leverage=Decimal("100"),
+        available_balance=Decimal("239.18205325"),
+        max_effective_leverage=Decimal("50"),
     )
 
     assert leverage is None
@@ -105,6 +119,7 @@ def test_risk_for_available_margin_downsizes_without_going_below_floor() -> None
         target_risk_usdt=Decimal("50"),
         min_risk_usdt=Decimal("20"),
         available_balance=Decimal("239.18"),
+        max_effective_leverage=Decimal("50"),
     )
 
     assert risk == Decimal("20.19")
@@ -121,9 +136,27 @@ def test_risk_for_available_margin_rejects_below_floor() -> None:
         target_risk_usdt=Decimal("50"),
         min_risk_usdt=Decimal("20"),
         available_balance=Decimal("239.18"),
+        max_effective_leverage=Decimal("50"),
     )
 
     assert risk is None
+
+
+def test_risk_for_available_margin_uses_effective_cap_not_instrument_max() -> None:
+    risk = _risk_for_available_margin(
+        signal_view(
+            symbol="SOLUSDT",
+            planned_entry=Decimal("70.545"),
+            stop_loss=Decimal("70.379781854588682758"),
+            max_leverage=Decimal("100"),
+        ),
+        target_risk_usdt=Decimal("30"),
+        min_risk_usdt=Decimal("15"),
+        available_balance=Decimal("239.18205325"),
+        max_effective_leverage=Decimal("50"),
+    )
+
+    assert risk == Decimal("26.60")
 
 
 class FakeCloseRepository:
@@ -273,6 +306,8 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
         max_trades_per_day=2,
         max_daily_loss_usdt=Decimal("100"),
         poll_interval_seconds=1,
+        min_risk_usdt=Decimal("15"),
+        max_effective_leverage=Decimal("50"),
         repository=repository,  # type: ignore[arg-type]
     )
 
@@ -290,9 +325,9 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
 
     assert repository.claims == 1
     assert repository.rejections == 0
-    assert repository.claimed_leverage == Decimal("94")
-    assert repository.opened_qty == Decimal("302.6")
-    assert client.leverage_values == [Decimal("94")]
+    assert repository.claimed_leverage == Decimal("50")
+    assert repository.opened_qty == Decimal("160.9")
+    assert client.leverage_values == [Decimal("50")]
     assert client.orders == 1
     assert client.stop_updates == 1
 

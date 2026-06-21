@@ -30,6 +30,7 @@ class LiveExecutionService:
         max_daily_loss_usdt: Decimal,
         poll_interval_seconds: float,
         min_risk_usdt: Decimal = Decimal("20"),
+        max_effective_leverage: Decimal = Decimal("50"),
         repository: LiveExecutionRepository | None = None,
     ) -> None:
         self._client = client
@@ -37,6 +38,7 @@ class LiveExecutionService:
         self._risk_usdt = risk_usdt
         self._min_risk_usdt = min(min_risk_usdt, risk_usdt)
         self._leverage = leverage
+        self._max_effective_leverage = max(Decimal(1), max_effective_leverage)
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
@@ -90,6 +92,7 @@ class LiveExecutionService:
             target_risk_usdt=self._risk_usdt,
             min_risk_usdt=self._min_risk_usdt,
             available_balance=balance.total_available_balance,
+            max_effective_leverage=self._max_effective_leverage,
         )
         if risk_usdt is None:
             await self._repository.reject_entry(
@@ -97,10 +100,12 @@ class LiveExecutionService:
                 signal=signal,
                 risk_usdt=self._risk_usdt,
                 qty=Decimal(0),
-                leverage=max(Decimal(1), signal.max_leverage),
+                leverage=_effective_max_leverage(signal, self._max_effective_leverage),
                 error=(
                     f"available balance {balance.total_available_balance} cannot support "
-                    f"minimum live risk {self._min_risk_usdt} USDT for this setup"
+                    f"minimum live risk {self._min_risk_usdt} USDT for this setup "
+                    f"within {_effective_max_leverage(signal, self._max_effective_leverage)}x "
+                    "max effective leverage"
                 ),
                 now=now,
             )
@@ -114,10 +119,11 @@ class LiveExecutionService:
             configured_leverage=self._leverage,
             instrument_max_leverage=signal.max_leverage,
             available_balance=balance.total_available_balance,
+            max_effective_leverage=self._max_effective_leverage,
         )
         if leverage is None:
             max_usable_margin = balance.total_available_balance * MARGIN_USAGE_LIMIT
-            max_leverage = max(Decimal(1), signal.max_leverage)
+            max_leverage = _effective_max_leverage(signal, self._max_effective_leverage)
             estimated_margin = notional / max_leverage
             await self._repository.reject_entry(
                 self._session_factory,
@@ -128,7 +134,7 @@ class LiveExecutionService:
                 error=(
                     f"available balance {balance.total_available_balance} cannot cover "
                     f"{estimated_margin} USDT estimated margin for {risk_usdt} USDT risk "
-                    f"even at {max_leverage}x max leverage; usable margin limit is "
+                    f"even at {max_leverage}x max effective leverage; usable margin limit is "
                     f"{max_usable_margin} USDT"
                 ),
                 now=now,
@@ -344,13 +350,15 @@ def _risk_for_available_margin(
     target_risk_usdt: Decimal,
     min_risk_usdt: Decimal,
     available_balance: Decimal,
+    max_effective_leverage: Decimal,
 ) -> Decimal | None:
     if target_risk_usdt <= 0 or min_risk_usdt <= 0 or available_balance <= 0:
         return None
     risk_per_unit = abs(signal.planned_entry - signal.stop_loss)
-    if risk_per_unit <= 0 or signal.planned_entry <= 0 or signal.max_leverage < 1:
+    effective_max_leverage = _effective_max_leverage(signal, max_effective_leverage)
+    if risk_per_unit <= 0 or signal.planned_entry <= 0 or effective_max_leverage < 1:
         return None
-    max_usable_notional = available_balance * MARGIN_USAGE_LIMIT * signal.max_leverage
+    max_usable_notional = available_balance * MARGIN_USAGE_LIMIT * effective_max_leverage
     max_risk = max_usable_notional * risk_per_unit / signal.planned_entry
     selected = min(target_risk_usdt, max_risk)
     selected = selected.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
@@ -365,17 +373,26 @@ def _select_leverage(
     configured_leverage: Decimal,
     instrument_max_leverage: Decimal,
     available_balance: Decimal,
+    max_effective_leverage: Decimal,
 ) -> Decimal | None:
-    if notional <= 0 or available_balance <= 0 or instrument_max_leverage < 1:
+    effective_max_leverage = min(instrument_max_leverage, max_effective_leverage)
+    if notional <= 0 or available_balance <= 0 or effective_max_leverage < 1:
         return None
     max_usable_margin = available_balance * MARGIN_USAGE_LIMIT
     if max_usable_margin <= 0:
         return None
     required = (notional / max_usable_margin).to_integral_value(rounding=ROUND_CEILING)
     selected = max(Decimal(1), configured_leverage, required)
-    if selected > instrument_max_leverage:
+    if selected > effective_max_leverage:
         return None
     return selected
+
+
+def _effective_max_leverage(
+    signal: LiveSignalView,
+    max_effective_leverage: Decimal,
+) -> Decimal:
+    return max(Decimal(1), min(signal.max_leverage, max_effective_leverage))
 
 
 def _round_down(value: Decimal, step: Decimal) -> Decimal:

@@ -176,6 +176,7 @@ async def main() -> None:
             risk_usdt=settings.execution_risk_usdt,
             leverage=settings.execution_leverage,
             min_risk_usdt=settings.execution_min_risk_usdt,
+            max_effective_leverage=settings.execution_max_effective_leverage,
             max_open_positions=settings.execution_max_open_positions,
             max_trades_per_day=settings.execution_max_trades_per_day,
             max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,
