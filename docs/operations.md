@@ -3,7 +3,7 @@
 ## Health model
 
 - API `/health/live` proves the HTTP process is responsive.
-- API `/health/ready` requires PostgreSQL and Alembic revision `0010`.
+- API `/health/ready` requires PostgreSQL and the configured Alembic revision.
 - Worker `/health/live` proves its event loop is responsive.
 - Worker `/health/ready` additionally requires PostgreSQL, the expected schema,
   complete market-data recovery, and a non-quiescing runtime.
@@ -31,6 +31,61 @@ After five continuous minutes without market-data readiness, the worker
 creates a Telegram service warning through the transactional outbox. Warning
 keys are bucketed to a 30-minute cooldown, and one recovery message is emitted
 when readiness returns. `/pause` suppresses these proactive messages.
+
+## Live execution startup checklist
+
+Live execution is off unless all of these are set:
+
+```dotenv
+EXECUTION_ENABLED=true
+EXECUTION_MODE=auto
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+```
+
+For the current small-account live test, the intended local settings are:
+
+```dotenv
+EXECUTION_RISK_USDT=20
+EXECUTION_MIN_RISK_USDT=5
+EXECUTION_MAX_EFFECTIVE_LEVERAGE=50
+EXECUTION_MAX_OPEN_POSITIONS=1
+EXECUTION_MAX_TRADES_PER_DAY=5
+EXECUTION_MAX_DAILY_LOSS_USDT=60
+EXECUTION_MAX_SLIPPAGE_BPS=20
+```
+
+Verify account and execution settings:
+
+```powershell
+docker compose run --rm worker python -m crypto_smc.execution.check_bybit_account
+```
+
+Inspect the latest persisted live attempts:
+
+```powershell
+docker compose exec -T postgres psql -U crypto_smc -d crypto_smc -c `
+  "select signal_id, status, symbol, side, risk_usdt, quantity, realized_pnl_usdt, error_message, updated_at from live_executions order by id desc limit 10;"
+```
+
+Use the Bybit UI as the final account source of truth when balances or
+positions look surprising.
+
+## Live execution interpretation
+
+Telegram may show both virtual and live messages:
+
+- `VIRTUAL ENTRY`, `VIRTUAL TP1`, and `VIRTUAL RESULT` describe the strategy
+  model.
+- `LIVE: ...` messages describe Bybit execution attempts.
+- `live entry skipped` means the bot intentionally did not place an order,
+  usually because bid/ask moved beyond the configured slippage guard.
+- `Real PnL` in a live-close message comes from Bybit closed PnL.
+
+Virtual PnL and real PnL can differ. Real PnL is the account result.
+
+Telegram `/settings` shows user notification and virtual-reference settings.
+It does not change `.env` live execution risk.
 
 ## Normal shutdown
 

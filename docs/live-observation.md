@@ -3,6 +3,11 @@
 An evaluation window freezes one immutable strategy version and defines the
 time boundary used for live statistics. Only one window may be active.
 
+Current observation reports are based on virtual outcomes. Live execution data
+is stored in `live_executions`, and Telegram live-close messages include Bybit
+real PnL when it is available, but full live-vs-virtual analytics are not yet
+part of the observation report.
+
 ## Commands
 
 ```powershell
@@ -45,8 +50,8 @@ Eligibility for an execution review requires all of these:
 - no symbol exceeding 35% of completed outcomes;
 - no unresolved data gaps or coverage failures.
 
-The verdict is only evidence for manual review. It never enables real order
-execution.
+The verdict is evidence for strategy review. It does not automatically change
+live execution flags or risk limits.
 
 ## Live versus replay
 
@@ -63,3 +68,15 @@ average score, score-band shares, entry rate, win rate, ambiguity, average R,
 Profit Factor, and drawdown. Results remain `preliminary` while the live window
 is shorter than 24 hours, either side has fewer than 30 completed outcomes, or
 the replay contains no market rows.
+
+## Live execution notes
+
+For operational live testing, compare three sources:
+
+1. Telegram `LIVE: ...` messages.
+2. Bybit account history and closed PnL.
+3. Database rows in `live_executions`.
+
+Virtual PnL can diverge from Bybit real PnL because live execution uses actual
+market fills, slippage guards, exchange stops, and Bybit fee/PnL accounting.
+Real account results must be taken from Bybit closed PnL.
