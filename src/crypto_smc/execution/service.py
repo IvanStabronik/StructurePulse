@@ -281,10 +281,14 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         actual_qty = await self._live_position_size(signal.symbol)
         if actual_qty <= 0:
+            real_pnl = await self._closed_pnl(signal.symbol, order_id="")
             await self._repository.mark_closed(
                 self._session_factory,
                 live_id=signal.live_id,
                 order_id="",
+                real_pnl=real_pnl[0],
+                real_entry_price=real_pnl[1],
+                real_exit_price=real_pnl[2],
                 now=datetime.now(UTC),
             )
             return
@@ -299,10 +303,14 @@ class LiveExecutionService:
             )
         except Exception as exc:
             if _is_already_flat_error(exc) or await self._live_position_size(signal.symbol) <= 0:
+                real_pnl = await self._closed_pnl(signal.symbol, order_id="")
                 await self._repository.mark_closed(
                     self._session_factory,
                     live_id=signal.live_id,
                     order_id="",
+                    real_pnl=real_pnl[0],
+                    real_entry_price=real_pnl[1],
+                    real_exit_price=real_pnl[2],
                     now=datetime.now(UTC),
                 )
                 return
@@ -313,10 +321,14 @@ class LiveExecutionService:
                 now=datetime.now(UTC),
             )
             return
+        real_pnl = await self._closed_pnl(signal.symbol, order_id=result.order_id)
         await self._repository.mark_closed(
             self._session_factory,
             live_id=signal.live_id,
             order_id=result.order_id,
+            real_pnl=real_pnl[0],
+            real_entry_price=real_pnl[1],
+            real_exit_price=real_pnl[2],
             now=datetime.now(UTC),
         )
 
@@ -333,6 +345,27 @@ class LiveExecutionService:
         if position is None or position.size <= 0:
             return Decimal(0)
         return position.size
+
+    async def _closed_pnl(
+        self,
+        symbol: str,
+        *,
+        order_id: str,
+    ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+        try:
+            closed_items = await self._client.get_closed_pnl(symbol=symbol, limit=10)
+        except Exception:
+            await logger.aexception("live_execution_closed_pnl_fetch_failed", symbol=symbol)
+            return None, None, None
+        if not closed_items:
+            return None, None, None
+        if order_id:
+            closed_items = tuple(item for item in closed_items if item.order_id == order_id)
+            if not closed_items:
+                return None, None, None
+        real_pnl = sum((item.closed_pnl for item in closed_items), Decimal(0))
+        first = closed_items[0]
+        return real_pnl, first.average_entry_price, first.average_exit_price
 
     async def _emergency_close(
         self,

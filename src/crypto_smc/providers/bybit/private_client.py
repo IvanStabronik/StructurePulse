@@ -49,6 +49,19 @@ class BybitPosition:
     average_price: Decimal
 
 
+@dataclass(frozen=True)
+class BybitClosedPnl:
+    symbol: str
+    side: str
+    qty: Decimal
+    average_entry_price: Decimal
+    average_exit_price: Decimal
+    closed_pnl: Decimal
+    order_id: str
+    created_time_ms: int
+    updated_time_ms: int
+
+
 class BybitPrivateClient:
     def __init__(
         self,
@@ -188,6 +201,26 @@ class BybitPrivateClient:
             )
         return None
 
+    async def get_closed_pnl(
+        self,
+        *,
+        symbol: str,
+        limit: int = 10,
+    ) -> tuple[BybitClosedPnl, ...]:
+        payload = await self._get(
+            "/v5/position/closed-pnl",
+            params={
+                "category": "linear",
+                "symbol": symbol.upper(),
+                "limit": str(limit),
+            },
+        )
+        result = self._result_object(payload)
+        items = result.get("list")
+        if not isinstance(items, list):
+            raise BybitPrivateAPIError("Bybit closed PnL response is missing result.list")
+        return tuple(_closed_pnl(item) for item in items if isinstance(item, dict))
+
     async def set_full_position_stop(
         self,
         *,
@@ -284,6 +317,20 @@ def _coin_balance(payload: dict[str, Any]) -> WalletCoinBalance:
         available_to_withdraw=_optional_decimal(payload.get("availableToWithdraw")),
         equity=_decimal(payload.get("equity")),
         usd_value=_decimal(payload.get("usdValue")),
+    )
+
+
+def _closed_pnl(payload: dict[str, Any]) -> BybitClosedPnl:
+    return BybitClosedPnl(
+        symbol=str(payload.get("symbol", "")).upper(),
+        side=str(payload.get("side", "")),
+        qty=_decimal(payload.get("qty")),
+        average_entry_price=_decimal(payload.get("avgEntryPrice")),
+        average_exit_price=_decimal(payload.get("avgExitPrice")),
+        closed_pnl=_decimal(payload.get("closedPnl")),
+        order_id=str(payload.get("orderId", "")),
+        created_time_ms=int(str(payload.get("createdTime") or "0")),
+        updated_time_ms=int(str(payload.get("updatedTime") or "0")),
     )
 
 

@@ -152,6 +152,26 @@ def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None
     assert "Est. margin: 449.025 USDT" in message
 
 
+def test_live_closed_notification_renders_real_pnl() -> None:
+    payload = delivery().payload | {
+        "status": "closed",
+        "qty": "288",
+        "remaining_qty": "0",
+        "risk_usdt": "20",
+        "notional_usdt": "4051.44",
+        "stop_loss": "14.1367",
+        "real_pnl_usdt": "4.2020167",
+        "real_entry_price": "14.14053819",
+        "real_exit_price": "14.09488889",
+    }
+
+    message = render_notification("live_position_closed", payload, "ru")
+
+    assert "Real PnL: 4.202 USDT" in message
+    assert "Real entry: 14.1405" in message
+    assert "Real exit: 14.0949" in message
+
+
 class FakeOutboxRepository:
     def __init__(self, pending: PendingDelivery) -> None:
         self.pending = pending

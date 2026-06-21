@@ -187,6 +187,7 @@ class FakeCloseRepository:
         self.closed = False
         self.failed = False
         self.closed_order_id: str | None = None
+        self.real_pnl: Decimal | None = None
         self.close_claims = 0
 
     async def claim_close(self, *_: object, **__: object) -> Decimal:
@@ -196,6 +197,7 @@ class FakeCloseRepository:
     async def mark_closed(self, *_: object, **kwargs: object) -> None:
         self.closed = True
         self.closed_order_id = str(kwargs["order_id"])
+        self.real_pnl = kwargs.get("real_pnl")  # type: ignore[assignment]
 
     async def mark_failed(self, *_: object, **__: object) -> None:
         self.failed = True
@@ -222,6 +224,20 @@ class FakeCloseClient:
         if self.close_error is not None:
             raise self.close_error
         return type("Order", (), {"order_id": "close-order"})()
+
+    async def get_closed_pnl(self, **_: object) -> tuple[Any, ...]:
+        return (
+            type(
+                "ClosedPnl",
+                (),
+                {
+                    "order_id": "close-order",
+                    "closed_pnl": Decimal("4.2"),
+                    "average_entry_price": Decimal("14.14"),
+                    "average_exit_price": Decimal("14.09"),
+                },
+            )(),
+        )
 
 
 class FakeEntryRepository:
@@ -446,6 +462,7 @@ async def test_close_marks_already_flat_position_closed_without_order() -> None:
 
     assert repository.closed is True
     assert repository.closed_order_id == ""
+    assert repository.real_pnl == Decimal("4.2")
     assert repository.failed is False
     assert client.close_orders == 0
 
@@ -483,5 +500,38 @@ async def test_close_treats_bybit_zero_position_error_as_closed() -> None:
 
     assert repository.closed is True
     assert repository.closed_order_id == ""
+    assert repository.real_pnl == Decimal("4.2")
     assert repository.failed is False
+    assert client.close_orders == 1
+
+
+async def test_close_includes_real_pnl_for_submitted_close_order() -> None:
+    repository = FakeCloseRepository()
+    client = FakeCloseClient(position_size=Decimal("0.35"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("10"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._close(
+        signal_view(
+            planned_entry=Decimal("72"),
+            quantity_step=Decimal("0.01"),
+            signal_status="stopped",
+            live_id=1,
+            live_status="open",
+            live_remaining_qty=Decimal("0.35"),
+        )
+    )
+
+    assert repository.closed is True
+    assert repository.closed_order_id == "close-order"
+    assert repository.real_pnl == Decimal("4.2")
     assert client.close_orders == 1

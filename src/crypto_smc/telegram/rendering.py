@@ -83,6 +83,12 @@ def render_notification(
             lines.insert(-1, f"Notional: {_number(payload.get('notional_usdt'))} USDT")
         if payload.get("estimated_margin_usdt") is not None:
             lines.insert(-1, f"Est. margin: {_number(payload.get('estimated_margin_usdt'))} USDT")
+        if payload.get("real_pnl_usdt") is not None:
+            lines.append(f"Real PnL: {_number(payload.get('real_pnl_usdt'))} USDT")
+        if payload.get("real_entry_price") is not None:
+            lines.append(f"Real entry: {_number(payload.get('real_entry_price'))}")
+        if payload.get("real_exit_price") is not None:
+            lines.append(f"Real exit: {_number(payload.get('real_exit_price'))}")
         if payload.get("error"):
             lines.append(f"Error: {payload.get('error')}")
         return "\n".join(lines)

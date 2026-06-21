@@ -430,6 +430,9 @@ class LiveExecutionRepository:
         *,
         live_id: int,
         order_id: str,
+        real_pnl: Decimal | None = None,
+        real_entry_price: Decimal | None = None,
+        real_exit_price: Decimal | None = None,
         now: datetime,
     ) -> None:
         async with session_factory() as session, session.begin():
@@ -447,7 +450,12 @@ class LiveExecutionRepository:
                 event_type="live_position_closed",
                 idempotency_key=f"live:{record.signal_id}:closed",
                 now=now,
-                payload=_live_payload(record),
+                payload=_live_payload(record)
+                | _real_pnl_payload(
+                    real_pnl=real_pnl,
+                    real_entry_price=real_entry_price,
+                    real_exit_price=real_exit_price,
+                ),
             )
 
     async def mark_failed(
@@ -550,3 +558,19 @@ def _live_payload(record: LiveExecutionRecord) -> dict[str, object]:
         "tp1_order_id": record.tp1_order_id or "",
         "close_order_id": record.close_order_id or "",
     }
+
+
+def _real_pnl_payload(
+    *,
+    real_pnl: Decimal | None,
+    real_entry_price: Decimal | None,
+    real_exit_price: Decimal | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if real_pnl is not None:
+        payload["real_pnl_usdt"] = str(real_pnl)
+    if real_entry_price is not None:
+        payload["real_entry_price"] = str(real_entry_price)
+    if real_exit_price is not None:
+        payload["real_exit_price"] = str(real_exit_price)
+    return payload

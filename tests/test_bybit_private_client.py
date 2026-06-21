@@ -252,3 +252,55 @@ async def test_get_linear_position_returns_open_position() -> None:
     assert position is not None
     assert position.symbol == "BTCUSDT"
     assert position.size == Decimal("0.25")
+
+
+@pytest.mark.asyncio
+async def test_get_closed_pnl_normalizes_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v5/position/closed-pnl"
+        assert request.url.query.decode() == "category=linear&symbol=LABUSDT&limit=5"
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        {
+                            "symbol": "LABUSDT",
+                            "side": "Buy",
+                            "qty": "288",
+                            "avgEntryPrice": "14.14053819",
+                            "avgExitPrice": "14.09488889",
+                            "closedPnl": "4.2020167",
+                            "orderId": "close-order",
+                            "createdTime": "1782057417229",
+                            "updatedTime": "1782057417234",
+                        }
+                    ]
+                },
+                "time": 1,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitPrivateClient(
+        base_url="https://unused.test",
+        api_key="test-key",
+        api_secret="test-secret",
+        timeout_seconds=1,
+        http_client=http_client,
+        timestamp_ms=lambda: 1,
+    )
+
+    items = await client.get_closed_pnl(symbol="labusdt", limit=5)
+    await http_client.aclose()
+
+    assert len(items) == 1
+    assert items[0].symbol == "LABUSDT"
+    assert items[0].closed_pnl == Decimal("4.2020167")
+    assert items[0].average_entry_price == Decimal("14.14053819")
+    assert items[0].average_exit_price == Decimal("14.09488889")
