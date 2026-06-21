@@ -36,6 +36,8 @@ class LiveSignalView:
     symbol: str
     direction: str
     signal_status: str
+    entry_lower: Decimal
+    entry_upper: Decimal
     planned_entry: Decimal
     stop_loss: Decimal
     current_stop: Decimal
@@ -116,6 +118,8 @@ class LiveExecutionRepository:
             symbol=signal.symbol,
             direction=signal.direction,
             signal_status=signal.status,
+            entry_lower=signal.entry_lower,
+            entry_upper=signal.entry_upper,
             planned_entry=signal.planned_entry,
             stop_loss=signal.stop_loss,
             current_stop=trade.current_stop,

@@ -12,6 +12,7 @@ from crypto_smc.db.repositories.execution import (
     LiveSignalView,
 )
 from crypto_smc.providers.bybit import BybitPrivateAPIError, BybitPrivateClient
+from crypto_smc.providers.protocols import MarketTickerProvider
 
 logger = structlog.get_logger(__name__)
 MARGIN_USAGE_LIMIT = Decimal("0.95")
@@ -31,14 +32,18 @@ class LiveExecutionService:
         poll_interval_seconds: float,
         min_risk_usdt: Decimal = Decimal("20"),
         max_effective_leverage: Decimal = Decimal("50"),
+        max_slippage_bps: Decimal = Decimal("20"),
+        ticker_provider: MarketTickerProvider | None = None,
         repository: LiveExecutionRepository | None = None,
     ) -> None:
         self._client = client
+        self._ticker_provider = ticker_provider
         self._session_factory = session_factory
         self._risk_usdt = risk_usdt
         self._min_risk_usdt = min(min_risk_usdt, risk_usdt)
         self._leverage = leverage
         self._max_effective_leverage = max(Decimal(1), max_effective_leverage)
+        self._max_slippage_bps = max(Decimal(0), max_slippage_bps)
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
@@ -174,6 +179,17 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         entry_order_submitted = False
         try:
+            if self._ticker_provider is not None:
+                entry_price = await self._entry_execution_price(signal)
+                if entry_price is None:
+                    raise LiveEntryRejected("missing live ticker before entry")
+                slippage_error = _entry_slippage_error(
+                    signal,
+                    execution_price=entry_price,
+                    max_slippage_bps=self._max_slippage_bps,
+                )
+                if slippage_error is not None:
+                    raise LiveEntryRejected(slippage_error)
             await self._client.set_linear_leverage(
                 symbol=signal.symbol,
                 leverage=leverage,
@@ -190,6 +206,14 @@ class LiveExecutionService:
                 symbol=signal.symbol,
                 stop_loss=signal.stop_loss,
             )
+        except LiveEntryRejected as exc:
+            await self._repository.mark_failed(
+                self._session_factory,
+                live_id=live_id,
+                error=str(exc),
+                now=datetime.now(UTC),
+            )
+            return
         except Exception as exc:
             if entry_order_submitted:
                 await self._emergency_close(signal.symbol, close_side, qty)
@@ -327,6 +351,17 @@ class LiveExecutionService:
         except Exception:
             await logger.aexception("live_execution_emergency_close_failed", symbol=symbol)
 
+    async def _entry_execution_price(self, signal: LiveSignalView) -> Decimal | None:
+        if self._ticker_provider is None:
+            return None
+        tickers = await self._ticker_provider.list_linear_tickers()
+        ticker = tickers.get(signal.symbol)
+        if ticker is None:
+            return None
+        if signal.direction == "long":
+            return ticker.ask_price if ticker.ask_price > 0 else ticker.last_price
+        return ticker.bid_price if ticker.bid_price > 0 else ticker.last_price
+
 
 def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | None:
     if signal.planned_entry <= 0 or signal.quantity_step <= 0:
@@ -413,3 +448,35 @@ def _is_already_flat_error(exc: Exception) -> bool:
         and "110017" in str(exc)
         and "position is zero" in str(exc).lower()
     )
+
+
+class LiveEntryRejected(Exception):
+    """Raised when a live entry is no longer executable safely."""
+
+
+def _entry_slippage_error(
+    signal: LiveSignalView,
+    *,
+    execution_price: Decimal,
+    max_slippage_bps: Decimal,
+) -> str | None:
+    if execution_price <= 0 or signal.planned_entry <= 0:
+        return "invalid live ticker price before entry"
+
+    max_slippage = signal.planned_entry * max_slippage_bps / Decimal(10_000)
+    if signal.direction == "long":
+        limit_price = min(signal.entry_upper, signal.planned_entry + max_slippage)
+        if execution_price > limit_price:
+            return (
+                f"live entry skipped: ask {execution_price} is above allowed "
+                f"{limit_price} for planned entry {signal.planned_entry}"
+            )
+        return None
+
+    limit_price = max(signal.entry_lower, signal.planned_entry - max_slippage)
+    if execution_price < limit_price:
+        return (
+            f"live entry skipped: bid {execution_price} is below allowed "
+            f"{limit_price} for planned entry {signal.planned_entry}"
+        )
+    return None
