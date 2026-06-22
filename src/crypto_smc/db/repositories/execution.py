@@ -155,7 +155,7 @@ class LiveExecutionRepository:
                 .where(LiveExecutionRecord.created_at >= day_start)
                 .where(
                     or_(
-                        LiveExecutionRecord.status != "failed",
+                        LiveExecutionRecord.status.notin_(("failed", "skipped")),
                         LiveExecutionRecord.entry_order_id.is_not(None),
                         LiveExecutionRecord.entry_submitted_at.is_not(None),
                     )
@@ -174,7 +174,7 @@ class LiveExecutionRepository:
             .where(LiveExecutionRecord.status.in_({"closed", "failed"}))
             .where(
                 or_(
-                    LiveExecutionRecord.status != "failed",
+                    LiveExecutionRecord.status.notin_(("failed", "skipped")),
                     LiveExecutionRecord.entry_order_id.is_not(None),
                     LiveExecutionRecord.entry_submitted_at.is_not(None),
                 )
@@ -311,7 +311,7 @@ class LiveExecutionRepository:
             signal_id=signal.signal_id,
             symbol=signal.symbol,
             direction=signal.direction,
-            status="failed",
+            status="skipped",
             order_budget_usdt=risk_usdt,
             entry_qty=qty,
             remaining_qty=qty,
@@ -326,13 +326,13 @@ class LiveExecutionRepository:
         await self._notify(
             session,
             signal_id=signal.signal_id,
-            event_type="live_execution_failed",
-            idempotency_key=f"live:{signal.signal_id}:failed:{record.id}",
+            event_type="live_entry_skipped",
+            idempotency_key=f"live:{signal.signal_id}:skipped:{record.id}",
             now=now,
             payload=_payload(
                 signal,
                 qty=qty,
-                status="failed",
+                status="skipped",
                 risk_usdt=risk_usdt,
                 leverage=leverage,
             )

@@ -161,6 +161,35 @@ class LiveExecutionService:
                 now=now,
             )
             return
+        if self._ticker_provider is not None:
+            entry_price = await self._entry_execution_price(signal)
+            if entry_price is None:
+                await self._repository.reject_entry(
+                    self._session_factory,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error="missing live ticker before entry",
+                    now=now,
+                )
+                return
+            slippage_error = _entry_slippage_error(
+                signal,
+                execution_price=entry_price,
+                max_slippage_bps=self._max_slippage_bps,
+            )
+            if slippage_error is not None:
+                await self._repository.reject_entry(
+                    self._session_factory,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error=slippage_error,
+                    now=now,
+                )
+                return
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
@@ -179,17 +208,6 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         entry_order_submitted = False
         try:
-            if self._ticker_provider is not None:
-                entry_price = await self._entry_execution_price(signal)
-                if entry_price is None:
-                    raise LiveEntryRejected("missing live ticker before entry")
-                slippage_error = _entry_slippage_error(
-                    signal,
-                    execution_price=entry_price,
-                    max_slippage_bps=self._max_slippage_bps,
-                )
-                if slippage_error is not None:
-                    raise LiveEntryRejected(slippage_error)
             await self._client.set_linear_leverage(
                 symbol=signal.symbol,
                 leverage=leverage,
@@ -206,14 +224,6 @@ class LiveExecutionService:
                 symbol=signal.symbol,
                 stop_loss=signal.stop_loss,
             )
-        except LiveEntryRejected as exc:
-            await self._repository.mark_failed(
-                self._session_factory,
-                live_id=live_id,
-                error=str(exc),
-                now=datetime.now(UTC),
-            )
-            return
         except Exception as exc:
             if entry_order_submitted:
                 await self._emergency_close(signal.symbol, close_side, qty)
@@ -481,10 +491,6 @@ def _is_already_flat_error(exc: Exception) -> bool:
         and "110017" in str(exc)
         and "position is zero" in str(exc).lower()
     )
-
-
-class LiveEntryRejected(Exception):
-    """Raised when a live entry is no longer executable safely."""
 
 
 def _entry_slippage_error(

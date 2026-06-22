@@ -78,8 +78,10 @@ Telegram may show both virtual and live messages:
 - `VIRTUAL ENTRY`, `VIRTUAL TP1`, and `VIRTUAL RESULT` describe the strategy
   model.
 - `LIVE: ...` messages describe Bybit execution attempts.
-- `live entry skipped` means the bot intentionally did not place an order,
-  usually because bid/ask moved beyond the configured slippage guard.
+- `LIVE: VIRTUAL ONLY` means the bot intentionally did not place an order and
+  kept tracking the signal virtually.
+- `live entry skipped` usually means bid/ask moved beyond the configured
+  slippage guard before any Bybit order was sent.
 - `Real PnL` in a live-close message comes from Bybit closed PnL.
 
 Virtual PnL and real PnL can differ. Real PnL is the account result.

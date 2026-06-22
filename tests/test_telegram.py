@@ -152,6 +152,26 @@ def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None
     assert "Est. margin: 449.025 USDT" in message
 
 
+def test_live_skipped_notification_is_not_rendered_as_failed_execution() -> None:
+    payload = delivery().payload | {
+        "status": "skipped",
+        "qty": "23027",
+        "risk_usdt": "20",
+        "leverage": "50",
+        "notional_usdt": "4790.6327",
+        "estimated_margin_usdt": "95.8127",
+        "stop_loss": "0.2072",
+        "error": "live entry skipped: ask 0.20883 is above allowed 0.20848113",
+    }
+
+    message = render_notification("live_entry_skipped", payload, "ru")
+
+    assert "LIVE: VIRTUAL ONLY" in message
+    assert "LIVE: EXECUTION FAILED" not in message
+    assert "Status: skipped" in message
+    assert "live entry skipped" in message
+
+
 def test_live_closed_notification_renders_real_pnl() -> None:
     payload = delivery().payload | {
         "status": "closed",

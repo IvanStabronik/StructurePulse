@@ -426,9 +426,11 @@ async def test_enter_rejects_live_order_when_price_slipped_above_entry_zone() ->
         )
     )
 
-    assert repository.claims == 1
-    assert repository.failed_error is not None
-    assert "live entry skipped" in repository.failed_error
+    assert repository.claims == 0
+    assert repository.rejections == 1
+    assert repository.rejected_error is not None
+    assert "live entry skipped" in repository.rejected_error
+    assert repository.failed_error is None
     assert client.leverage_updates == 0
     assert client.orders == 0
     assert client.stop_updates == 0

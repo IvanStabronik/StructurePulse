@@ -95,6 +95,8 @@ Live messages:
 - `LIVE: TP1 HALF CLOSED`: reduce-only TP1 close was submitted.
 - `LIVE: POSITION CLOSED`: live position is closed.
 - `LIVE: EXECUTION FAILED`: live execution was skipped or failed.
+- `LIVE: VIRTUAL ONLY`: the setup remains tracked virtually, but the bot did
+  not submit a Bybit order because the pre-live guard rejected it.
 
 When Bybit closed PnL is available, `LIVE: POSITION CLOSED` includes:
 
@@ -102,5 +104,5 @@ When Bybit closed PnL is available, `LIVE: POSITION CLOSED` includes:
 - `Real entry`;
 - `Real exit`.
 
-If `LIVE: EXECUTION FAILED` contains `live entry skipped`, no Bybit order was
-sent. This is usually a slippage guard, not a system crash.
+If `LIVE: VIRTUAL ONLY` contains `live entry skipped`, no Bybit order was sent.
+This is usually a slippage guard, not a system crash.

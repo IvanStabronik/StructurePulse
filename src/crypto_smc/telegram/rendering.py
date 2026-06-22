@@ -59,6 +59,7 @@ def render_notification(
         "live_tp1_reduced",
         "live_position_closed",
         "live_execution_failed",
+        "live_entry_skipped",
     }:
         titles = {
             "live_entry_submitting": "LIVE: SUBMITTING ORDER",
@@ -66,6 +67,7 @@ def render_notification(
             "live_tp1_reduced": "LIVE: TP1 HALF CLOSED",
             "live_position_closed": "LIVE: POSITION CLOSED",
             "live_execution_failed": "LIVE: EXECUTION FAILED",
+            "live_entry_skipped": "LIVE: VIRTUAL ONLY",
         }
         lines = [
             f"{titles[event_type]}: {symbol} {direction}",
