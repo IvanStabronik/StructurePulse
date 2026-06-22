@@ -62,6 +62,7 @@ class LiveSignalView:
     live_remaining_qty: Decimal | None
     live_entry_order_id: str | None
     live_entry_order_link_id: str | None
+    live_entry_submitted_at: datetime | None
 
 
 class LiveExecutionRepository:
@@ -148,6 +149,7 @@ class LiveExecutionRepository:
             live_remaining_qty=live.remaining_qty if live is not None else None,
             live_entry_order_id=live.entry_order_id if live is not None else None,
             live_entry_order_link_id=(live.entry_order_link_id if live is not None else None),
+            live_entry_submitted_at=(live.entry_submitted_at if live is not None else None),
         )
 
     async def open_live_count(self, session: AsyncSession) -> int:

@@ -65,6 +65,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_max_daily_loss_usdt == 10
     assert settings.execution_poll_interval_seconds == 1
     assert settings.execution_max_effective_leverage == 45
+    assert settings.execution_pending_entry_timeout_seconds == 1200
 
 
 def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:

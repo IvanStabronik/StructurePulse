@@ -50,9 +50,10 @@ EXECUTION_RISK_USDT=20
 EXECUTION_MIN_RISK_USDT=5
 EXECUTION_MAX_EFFECTIVE_LEVERAGE=45
 EXECUTION_MAX_OPEN_POSITIONS=1
-EXECUTION_MAX_TRADES_PER_DAY=5
+EXECUTION_MAX_TRADES_PER_DAY=10
 EXECUTION_MAX_DAILY_LOSS_USDT=60
 EXECUTION_MAX_SLIPPAGE_BPS=20
+EXECUTION_PENDING_ENTRY_TIMEOUT_SECONDS=1200
 ```
 
 Verify account and execution settings:
@@ -86,6 +87,9 @@ Telegram may show both virtual and live messages:
   kept tracking the signal virtually.
 - `pending entry cancelled` means the real limit entry did not fill before the
   virtual signal expired or was invalidated, so the bot cancelled the order.
+- Pending entry orders are also cancelled after
+  `EXECUTION_PENDING_ENTRY_TIMEOUT_SECONDS` to avoid one stale limit order
+  blocking the only live slot for too long.
 - `Real PnL` in a live-close message comes from Bybit closed PnL.
 
 Virtual PnL and real PnL can differ. Real PnL is the account result.

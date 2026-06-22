@@ -70,10 +70,13 @@ EXECUTION_MAX_OPEN_POSITIONS
 EXECUTION_MAX_TRADES_PER_DAY
 EXECUTION_MAX_DAILY_LOSS_USDT
 EXECUTION_MAX_SLIPPAGE_BPS
+EXECUTION_PENDING_ENTRY_TIMEOUT_SECONDS
 ```
 
 The small-account live profile caps effective leverage at `45x` to avoid
 Bybit risk-tier rejection at `50x` on some high-notional setups.
+It also cancels stale pending entry orders after 20 minutes in the local live
+test profile, so one unfilled limit order does not block every later setup.
 
 Use this command to inspect live execution settings:
 

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -33,6 +34,7 @@ def signal_view(
     live_remaining_qty: Decimal | None = None,
     live_entry_order_id: str | None = None,
     live_entry_order_link_id: str | None = None,
+    live_entry_submitted_at: datetime | None = None,
 ) -> LiveSignalView:
     return LiveSignalView(
         signal_id=1,
@@ -58,6 +60,7 @@ def signal_view(
         live_remaining_qty=live_remaining_qty,
         live_entry_order_id=live_entry_order_id,
         live_entry_order_link_id=live_entry_order_link_id,
+        live_entry_submitted_at=live_entry_submitted_at,
     )
 
 
@@ -545,6 +548,39 @@ async def test_pending_limit_is_cancelled_when_signal_expires_before_fill() -> N
     )
 
     assert repository.cancelled_error == "pending entry cancelled: signal status became expired"
+    assert repository.opened_qty is None
+    assert client.cancellations == 1
+
+
+async def test_pending_limit_is_cancelled_after_timeout_even_if_signal_is_active() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(available_balance=Decimal("239.18205325"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        pending_entry_timeout_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            signal_status="active",
+            live_id=7,
+            live_status="entry_pending",
+            live_remaining_qty=Decimal("135.5"),
+            live_entry_order_id="entry-limit-order",
+            live_entry_order_link_id="sp-1-entry",
+            live_entry_submitted_at=datetime.now(UTC) - timedelta(seconds=2),
+        )
+    )
+
+    assert repository.cancelled_error == "pending entry cancelled: exceeded 1s timeout"
     assert repository.opened_qty is None
     assert client.cancellations == 1
 

@@ -30,6 +30,7 @@ class LiveExecutionService:
         max_trades_per_day: int,
         max_daily_loss_usdt: Decimal,
         poll_interval_seconds: float,
+        pending_entry_timeout_seconds: int = 1200,
         min_risk_usdt: Decimal = Decimal("20"),
         max_effective_leverage: Decimal = Decimal("50"),
         max_slippage_bps: Decimal = Decimal("20"),
@@ -47,6 +48,7 @@ class LiveExecutionService:
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
+        self._pending_entry_timeout_seconds = pending_entry_timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
         self._repository = repository or LiveExecutionRepository()
 
@@ -83,6 +85,19 @@ class LiveExecutionService:
         if signal.live_status == "entry_pending":
             if signal.signal_status in TERMINAL_SIGNAL_STATUSES:
                 await self._cancel_pending_entry(signal)
+                return
+            if _pending_entry_timed_out(
+                signal,
+                timeout_seconds=self._pending_entry_timeout_seconds,
+                now=datetime.now(UTC),
+            ):
+                await self._cancel_pending_entry(
+                    signal,
+                    reason=(
+                        "pending entry cancelled: exceeded "
+                        f"{self._pending_entry_timeout_seconds}s timeout"
+                    ),
+                )
                 return
             await self._sync_pending_entry(signal)
             return
@@ -262,9 +277,17 @@ class LiveExecutionService:
             now=datetime.now(UTC),
         )
 
-    async def _cancel_pending_entry(self, signal: LiveSignalView) -> None:
+    async def _cancel_pending_entry(
+        self,
+        signal: LiveSignalView,
+        *,
+        reason: str | None = None,
+    ) -> None:
         if signal.live_id is None:
             return
+        resolved_reason = reason or (
+            f"pending entry cancelled: signal status became {signal.signal_status}"
+        )
         actual_qty = await self._live_position_size(signal.symbol)
         if actual_qty > 0:
             await self._sync_pending_entry(signal)
@@ -285,7 +308,7 @@ class LiveExecutionService:
                     live_id=signal.live_id,
                     error=(
                         "pending entry cancel confirmed absent: "
-                        f"signal status became {signal.signal_status}"
+                        f"{resolved_reason.removeprefix('pending entry cancelled: ')}"
                     ),
                     now=datetime.now(UTC),
                 )
@@ -300,7 +323,7 @@ class LiveExecutionService:
         await self._repository.mark_entry_cancelled(
             self._session_factory,
             live_id=signal.live_id,
-            error=f"pending entry cancelled: signal status became {signal.signal_status}",
+            error=resolved_reason,
             now=datetime.now(UTC),
         )
 
@@ -509,6 +532,20 @@ def _entry_limit_price(signal: LiveSignalView) -> Decimal:
     if signal.direction == "long":
         return _round_down(signal.planned_entry, signal.price_tick_size)
     return _round_up(signal.planned_entry, signal.price_tick_size)
+
+
+def _pending_entry_timed_out(
+    signal: LiveSignalView,
+    *,
+    timeout_seconds: int,
+    now: datetime,
+) -> bool:
+    if timeout_seconds <= 0 or signal.live_entry_submitted_at is None:
+        return False
+    submitted_at = signal.live_entry_submitted_at
+    if submitted_at.tzinfo is None:
+        submitted_at = submitted_at.replace(tzinfo=UTC)
+    return (now - submitted_at).total_seconds() >= timeout_seconds
 
 
 def _risk_for_available_margin(

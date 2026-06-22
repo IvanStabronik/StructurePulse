@@ -181,6 +181,7 @@ async def main() -> None:
             max_open_positions=settings.execution_max_open_positions,
             max_trades_per_day=settings.execution_max_trades_per_day,
             max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,
+            pending_entry_timeout_seconds=settings.execution_pending_entry_timeout_seconds,
             poll_interval_seconds=settings.execution_poll_interval_seconds,
             ticker_provider=provider,
         )
