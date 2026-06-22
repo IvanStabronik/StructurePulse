@@ -80,14 +80,14 @@ def test_quantity_for_risk_rejects_too_small_order() -> None:
 
 def test_select_leverage_raises_to_fit_available_margin() -> None:
     leverage = _select_leverage(
-        notional=Decimal("21346.917"),
+        notional=Decimal("18000"),
         configured_leverage=Decimal("20"),
         instrument_max_leverage=Decimal("100"),
         available_balance=Decimal("239.18205325"),
         max_effective_leverage=Decimal("100"),
     )
 
-    assert leverage == Decimal("94")
+    assert leverage == Decimal("95")
 
 
 def test_select_leverage_rejects_when_instrument_max_is_too_low() -> None:
@@ -123,12 +123,12 @@ def test_risk_for_available_margin_downsizes_without_going_below_floor() -> None
             max_leverage=Decimal("20"),
         ),
         target_risk_usdt=Decimal("50"),
-        min_risk_usdt=Decimal("20"),
+        min_risk_usdt=Decimal("15"),
         available_balance=Decimal("239.18"),
         max_effective_leverage=Decimal("50"),
     )
 
-    assert risk == Decimal("20.19")
+    assert risk == Decimal("17.00")
 
 
 def test_risk_for_available_margin_rejects_below_floor() -> None:
@@ -162,7 +162,7 @@ def test_risk_for_available_margin_uses_effective_cap_not_instrument_max() -> No
         max_effective_leverage=Decimal("50"),
     )
 
-    assert risk == Decimal("26.60")
+    assert risk == Decimal("22.40")
 
 
 def test_entry_slippage_error_rejects_long_above_allowed_price() -> None:
@@ -387,7 +387,7 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
     assert repository.claims == 1
     assert repository.rejections == 0
     assert repository.claimed_leverage == Decimal("50")
-    assert repository.opened_qty == Decimal("160.9")
+    assert repository.opened_qty == Decimal("135.5")
     assert client.leverage_values == [Decimal("50")]
     assert client.orders == 1
     assert client.stop_updates == 1

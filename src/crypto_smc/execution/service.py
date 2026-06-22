@@ -15,7 +15,7 @@ from crypto_smc.providers.bybit import BybitPrivateAPIError, BybitPrivateClient
 from crypto_smc.providers.protocols import MarketTickerProvider
 
 logger = structlog.get_logger(__name__)
-MARGIN_USAGE_LIMIT = Decimal("0.95")
+MARGIN_USAGE_LIMIT = Decimal("0.80")
 
 
 class LiveExecutionService:
