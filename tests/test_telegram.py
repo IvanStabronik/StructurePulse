@@ -152,6 +152,26 @@ def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None
     assert "Est. margin: 449.025 USDT" in message
 
 
+def test_live_pending_notification_mentions_limit_order() -> None:
+    payload = delivery().payload | {
+        "status": "entry_pending",
+        "qty": "23.07",
+        "remaining_qty": "23.07",
+        "risk_usdt": "15.2",
+        "leverage": "50",
+        "notional_usdt": "10504.8092",
+        "estimated_margin_usdt": "210.0962",
+        "stop_loss": "456.0038",
+    }
+
+    message = render_notification("live_entry_pending", payload, "ru")
+
+    assert "LIVE: LIMIT ORDER PLACED" in message
+    assert "LIVE: POSITION OPEN" not in message
+    assert "Status: entry_pending" in message
+    assert "Remaining: 23.07" in message
+
+
 def test_live_skipped_notification_is_not_rendered_as_failed_execution() -> None:
     payload = delivery().payload | {
         "status": "skipped",

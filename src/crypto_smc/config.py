@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     execution_max_daily_loss_usdt: Decimal = Field(default=Decimal("10"), gt=0, le=100_000)
     execution_max_slippage_bps: Decimal = Field(default=Decimal("20"), ge=0, le=1000)
     execution_leverage: Decimal = Field(default=Decimal("1"), ge=1, le=100)
-    execution_max_effective_leverage: Decimal = Field(default=Decimal("50"), ge=1, le=100)
+    execution_max_effective_leverage: Decimal = Field(default=Decimal("45"), ge=1, le=100)
     execution_poll_interval_seconds: float = Field(default=1, ge=0.2, le=30)
 
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"

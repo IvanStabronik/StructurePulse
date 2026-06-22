@@ -55,6 +55,7 @@ def render_notification(
         return f"{title}: {symbol} {direction}\n{entry}: {_number(payload.get('planned_entry'))}"
     if event_type in {
         "live_entry_submitting",
+        "live_entry_pending",
         "live_entry_open",
         "live_tp1_reduced",
         "live_position_closed",
@@ -63,6 +64,7 @@ def render_notification(
     }:
         titles = {
             "live_entry_submitting": "LIVE: SUBMITTING ORDER",
+            "live_entry_pending": "LIVE: LIMIT ORDER PLACED",
             "live_entry_open": "LIVE: POSITION OPEN",
             "live_tp1_reduced": "LIVE: TP1 HALF CLOSED",
             "live_position_closed": "LIVE: POSITION CLOSED",

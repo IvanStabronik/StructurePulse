@@ -15,7 +15,14 @@ from crypto_smc.db.models import (
 )
 
 OPEN_LIVE_EXECUTION_STATUSES = frozenset(
-    {"entry_submitting", "open", "tp1_submitting", "tp1_reduced", "closing"}
+    {
+        "entry_submitting",
+        "entry_pending",
+        "open",
+        "tp1_submitting",
+        "tp1_reduced",
+        "closing",
+    }
 )
 TERMINAL_SIGNAL_STATUSES = frozenset(
     {
@@ -44,6 +51,7 @@ class LiveSignalView:
     take_profit_1: Decimal
     take_profit_2: Decimal
     virtual_remaining_quantity: Decimal
+    price_tick_size: Decimal
     quantity_step: Decimal
     min_order_quantity: Decimal
     max_market_order_quantity: Decimal
@@ -52,6 +60,8 @@ class LiveSignalView:
     live_id: int | None
     live_status: str | None
     live_remaining_qty: Decimal | None
+    live_entry_order_id: str | None
+    live_entry_order_link_id: str | None
 
 
 class LiveExecutionRepository:
@@ -103,6 +113,7 @@ class LiveExecutionRepository:
                 SignalRecord.status.in_(
                     {
                         "entered",
+                        "active",
                         "tp1_reached",
                         *TERMINAL_SIGNAL_STATUSES,
                     }
@@ -126,6 +137,7 @@ class LiveExecutionRepository:
             take_profit_1=signal.take_profit_1,
             take_profit_2=signal.take_profit_2,
             virtual_remaining_quantity=trade.remaining_quantity,
+            price_tick_size=instrument.tick_size,
             quantity_step=instrument.quantity_step,
             min_order_quantity=instrument.min_order_quantity,
             max_market_order_quantity=instrument.max_market_order_quantity,
@@ -134,6 +146,8 @@ class LiveExecutionRepository:
             live_id=live.id if live is not None else None,
             live_status=live.status if live is not None else None,
             live_remaining_qty=live.remaining_qty if live is not None else None,
+            live_entry_order_id=live.entry_order_id if live is not None else None,
+            live_entry_order_link_id=(live.entry_order_link_id if live is not None else None),
         )
 
     async def open_live_count(self, session: AsyncSession) -> int:
@@ -223,7 +237,7 @@ class LiveExecutionRepository:
         max_daily_loss_usdt: Decimal,
     ) -> int | None:
         async with session_factory() as session, session.begin():
-            if signal.signal_status != "entered":
+            if signal.signal_status not in {"active", "entered"}:
                 return None
             existing = await session.scalar(
                 select(LiveExecutionRecord).where(LiveExecutionRecord.signal_id == signal.signal_id)
@@ -295,6 +309,59 @@ class LiveExecutionRepository:
                 ),
             )
             return record.id
+
+    async def mark_entry_pending(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        live_id: int,
+        order_id: str,
+        leverage: Decimal,
+        limit_price: Decimal,
+        now: datetime,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            record = await self._locked(session, live_id)
+            record.status = "entry_pending"
+            record.entry_order_id = order_id
+            record.entry_price = limit_price
+            record.entry_submitted_at = now
+            record.updated_at = now
+            await self._notify(
+                session,
+                signal_id=record.signal_id,
+                event_type="live_entry_pending",
+                idempotency_key=f"live:{record.signal_id}:entry_pending",
+                now=now,
+                payload=_live_payload(record)
+                | {
+                    "leverage": str(leverage),
+                    "estimated_margin_usdt": str(record.entry_qty * limit_price / leverage),
+                },
+            )
+
+    async def mark_entry_cancelled(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        live_id: int,
+        error: str,
+        now: datetime,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            record = await self._locked(session, live_id)
+            record.status = "skipped"
+            record.remaining_qty = Decimal(0)
+            record.error = error[:2000]
+            record.updated_at = now
+            await self._notify(
+                session,
+                signal_id=record.signal_id,
+                event_type="live_entry_skipped",
+                idempotency_key=f"live:{record.signal_id}:entry_cancelled:{record.id}",
+                now=now,
+                payload=_live_payload(record) | {"error": record.error},
+            )
 
     async def _reject_entry_record(
         self,

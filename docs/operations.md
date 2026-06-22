@@ -48,7 +48,7 @@ For the current small-account live test, the intended local settings are:
 ```dotenv
 EXECUTION_RISK_USDT=20
 EXECUTION_MIN_RISK_USDT=5
-EXECUTION_MAX_EFFECTIVE_LEVERAGE=50
+EXECUTION_MAX_EFFECTIVE_LEVERAGE=45
 EXECUTION_MAX_OPEN_POSITIONS=1
 EXECUTION_MAX_TRADES_PER_DAY=5
 EXECUTION_MAX_DAILY_LOSS_USDT=60
@@ -78,10 +78,14 @@ Telegram may show both virtual and live messages:
 - `VIRTUAL ENTRY`, `VIRTUAL TP1`, and `VIRTUAL RESULT` describe the strategy
   model.
 - `LIVE: ...` messages describe Bybit execution attempts.
+- `LIVE: LIMIT ORDER PLACED` means a real GTC limit entry order is resting on
+  Bybit. It is not an open position yet.
+- `LIVE: POSITION OPEN` means Bybit reports a non-zero position and the bot has
+  set the protective stop.
 - `LIVE: VIRTUAL ONLY` means the bot intentionally did not place an order and
   kept tracking the signal virtually.
-- `live entry skipped` usually means bid/ask moved beyond the configured
-  slippage guard before any Bybit order was sent.
+- `pending entry cancelled` means the real limit entry did not fill before the
+  virtual signal expired or was invalidated, so the bot cancelled the order.
 - `Real PnL` in a live-close message comes from Bybit closed PnL.
 
 Virtual PnL and real PnL can differ. Real PnL is the account result.

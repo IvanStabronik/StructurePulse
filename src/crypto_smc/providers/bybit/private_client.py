@@ -156,6 +156,52 @@ class BybitPrivateClient:
             order_link_id=str(result.get("orderLinkId", "")),
         )
 
+    async def place_limit_order(
+        self,
+        *,
+        symbol: str,
+        side: Literal["Buy", "Sell"],
+        qty: Decimal,
+        price: Decimal,
+        order_link_id: str,
+        reduce_only: bool = False,
+        position_idx: int = 0,
+    ) -> BybitOrderResult:
+        payload = await self._post(
+            "/v5/order/create",
+            body={
+                "category": "linear",
+                "symbol": symbol.upper(),
+                "side": side,
+                "orderType": "Limit",
+                "qty": _format_decimal(qty),
+                "price": _format_decimal(price),
+                "timeInForce": "GTC",
+                "positionIdx": position_idx,
+                "reduceOnly": reduce_only,
+                "orderLinkId": order_link_id,
+            },
+        )
+        result = self._result_object(payload)
+        return BybitOrderResult(
+            order_id=str(result.get("orderId", "")),
+            order_link_id=str(result.get("orderLinkId", "")),
+        )
+
+    async def cancel_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str | None = None,
+        order_link_id: str | None = None,
+    ) -> None:
+        body: dict[str, object] = {"category": "linear", "symbol": symbol.upper()}
+        if order_id:
+            body["orderId"] = order_id
+        if order_link_id:
+            body["orderLinkId"] = order_link_id
+        await self._post("/v5/order/cancel", body=body)
+
     async def set_linear_leverage(
         self,
         *,

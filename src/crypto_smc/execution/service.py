@@ -77,8 +77,14 @@ class LiveExecutionService:
 
     async def _handle(self, signal: LiveSignalView) -> None:
         if signal.live_id is None:
-            if signal.signal_status == "entered":
+            if signal.signal_status in {"active", "entered"}:
                 await self._enter(signal)
+            return
+        if signal.live_status == "entry_pending":
+            if signal.signal_status in TERMINAL_SIGNAL_STATUSES:
+                await self._cancel_pending_entry(signal)
+                return
+            await self._sync_pending_entry(signal)
             return
         if signal.live_status == "open" and signal.signal_status == "tp1_reached":
             await self._take_profit_1(signal)
@@ -161,35 +167,6 @@ class LiveExecutionService:
                 now=now,
             )
             return
-        if self._ticker_provider is not None:
-            entry_price = await self._entry_execution_price(signal)
-            if entry_price is None:
-                await self._repository.reject_entry(
-                    self._session_factory,
-                    signal=signal,
-                    risk_usdt=risk_usdt,
-                    qty=qty,
-                    leverage=leverage,
-                    error="missing live ticker before entry",
-                    now=now,
-                )
-                return
-            slippage_error = _entry_slippage_error(
-                signal,
-                execution_price=entry_price,
-                max_slippage_bps=self._max_slippage_bps,
-            )
-            if slippage_error is not None:
-                await self._repository.reject_entry(
-                    self._session_factory,
-                    signal=signal,
-                    risk_usdt=risk_usdt,
-                    qty=qty,
-                    leverage=leverage,
-                    error=slippage_error,
-                    now=now,
-                )
-                return
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
@@ -205,28 +182,37 @@ class LiveExecutionService:
             return
 
         side = _entry_side(signal.direction)
-        close_side = _close_side(signal.direction)
-        entry_order_submitted = False
+        limit_price = _entry_limit_price(signal)
+        submitted_order_id: str | None = None
+        submitted_order_link_id = f"sp-{signal.signal_id}-entry"
         try:
             await self._client.set_linear_leverage(
                 symbol=signal.symbol,
                 leverage=leverage,
             )
-            result = await self._client.place_market_order(
+            result = await self._client.place_limit_order(
                 symbol=signal.symbol,
                 side=side,
                 qty=qty,
-                order_link_id=f"sp-{signal.signal_id}-entry",
+                price=limit_price,
+                order_link_id=submitted_order_link_id,
             )
-            entry_order_submitted = True
-            actual_qty = await self._position_size(signal.symbol, fallback=qty)
-            await self._client.set_full_position_stop(
-                symbol=signal.symbol,
-                stop_loss=signal.stop_loss,
+            submitted_order_id = result.order_id
+            await self._repository.mark_entry_pending(
+                self._session_factory,
+                live_id=live_id,
+                order_id=result.order_id,
+                leverage=leverage,
+                limit_price=limit_price,
+                now=datetime.now(UTC),
             )
         except Exception as exc:
-            if entry_order_submitted:
-                await self._emergency_close(signal.symbol, close_side, qty)
+            if submitted_order_id is not None:
+                await self._cancel_untracked_entry_order(
+                    symbol=signal.symbol,
+                    order_id=submitted_order_id,
+                    order_link_id=submitted_order_link_id,
+                )
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=live_id,
@@ -234,14 +220,98 @@ class LiveExecutionService:
                 now=datetime.now(UTC),
             )
             return
-        await self._repository.mark_entry_open(
-            self._session_factory,
+        await self._sync_pending_entry(
+            signal,
             live_id=live_id,
             order_id=result.order_id,
+        )
+
+    async def _sync_pending_entry(
+        self,
+        signal: LiveSignalView,
+        *,
+        live_id: int | None = None,
+        order_id: str | None = None,
+    ) -> None:
+        resolved_live_id = live_id or signal.live_id
+        if resolved_live_id is None:
+            return
+        actual_qty = await self._live_position_size(signal.symbol)
+        if actual_qty <= 0:
+            return
+        try:
+            await self._client.set_full_position_stop(
+                symbol=signal.symbol,
+                stop_loss=signal.stop_loss,
+            )
+        except Exception as exc:
+            await self._emergency_close(signal.symbol, _close_side(signal.direction), actual_qty)
+            await self._repository.mark_failed(
+                self._session_factory,
+                live_id=resolved_live_id,
+                error=str(exc),
+                now=datetime.now(UTC),
+            )
+            return
+        await self._repository.mark_entry_open(
+            self._session_factory,
+            live_id=resolved_live_id,
+            order_id=order_id or signal.live_entry_order_id or "",
             qty=actual_qty,
             stop_loss=signal.stop_loss,
             now=datetime.now(UTC),
         )
+
+    async def _cancel_pending_entry(self, signal: LiveSignalView) -> None:
+        if signal.live_id is None:
+            return
+        actual_qty = await self._live_position_size(signal.symbol)
+        if actual_qty > 0:
+            await self._sync_pending_entry(signal)
+            return
+        try:
+            await self._client.cancel_order(
+                symbol=signal.symbol,
+                order_id=signal.live_entry_order_id,
+                order_link_id=signal.live_entry_order_link_id,
+            )
+        except Exception as exc:
+            if await self._live_position_size(signal.symbol) > 0:
+                await self._sync_pending_entry(signal)
+                return
+            await self._repository.mark_failed(
+                self._session_factory,
+                live_id=signal.live_id,
+                error=str(exc),
+                now=datetime.now(UTC),
+            )
+            return
+        await self._repository.mark_entry_cancelled(
+            self._session_factory,
+            live_id=signal.live_id,
+            error=f"pending entry cancelled: signal status became {signal.signal_status}",
+            now=datetime.now(UTC),
+        )
+
+    async def _cancel_untracked_entry_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+        order_link_id: str,
+    ) -> None:
+        try:
+            await self._client.cancel_order(
+                symbol=symbol,
+                order_id=order_id,
+                order_link_id=order_link_id,
+            )
+        except Exception:
+            await logger.aexception(
+                "live_execution_untracked_entry_cancel_failed",
+                symbol=symbol,
+                order_id=order_id,
+            )
 
     async def _take_profit_1(self, signal: LiveSignalView) -> None:
         if signal.live_id is None or signal.live_remaining_qty is None:
@@ -422,6 +492,14 @@ def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | 
     return qty if qty > 0 else None
 
 
+def _entry_limit_price(signal: LiveSignalView) -> Decimal:
+    if signal.price_tick_size <= 0:
+        return signal.planned_entry
+    if signal.direction == "long":
+        return _round_down(signal.planned_entry, signal.price_tick_size)
+    return _round_up(signal.planned_entry, signal.price_tick_size)
+
+
 def _risk_for_available_margin(
     signal: LiveSignalView,
     *,
@@ -475,6 +553,10 @@ def _effective_max_leverage(
 
 def _round_down(value: Decimal, step: Decimal) -> Decimal:
     return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def _round_up(value: Decimal, step: Decimal) -> Decimal:
+    return (value / step).to_integral_value(rounding=ROUND_CEILING) * step
 
 
 def _entry_side(direction: str) -> Literal["Buy", "Sell"]:

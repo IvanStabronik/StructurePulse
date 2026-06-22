@@ -22,6 +22,7 @@ def signal_view(
     entry_upper: Decimal = Decimal("101"),
     planned_entry: Decimal = Decimal("100"),
     stop_loss: Decimal = Decimal("95"),
+    price_tick_size: Decimal = Decimal("0.01"),
     quantity_step: Decimal = Decimal("0.001"),
     min_order_quantity: Decimal = Decimal("0.001"),
     max_market_order_quantity: Decimal = Decimal("1000"),
@@ -30,6 +31,8 @@ def signal_view(
     live_id: int | None = None,
     live_status: str | None = None,
     live_remaining_qty: Decimal | None = None,
+    live_entry_order_id: str | None = None,
+    live_entry_order_link_id: str | None = None,
 ) -> LiveSignalView:
     return LiveSignalView(
         signal_id=1,
@@ -44,6 +47,7 @@ def signal_view(
         take_profit_1=Decimal("105"),
         take_profit_2=Decimal("110"),
         virtual_remaining_quantity=Decimal("1"),
+        price_tick_size=price_tick_size,
         quantity_step=quantity_step,
         min_order_quantity=min_order_quantity,
         max_market_order_quantity=max_market_order_quantity,
@@ -52,6 +56,8 @@ def signal_view(
         live_id=live_id,
         live_status=live_status,
         live_remaining_qty=live_remaining_qty,
+        live_entry_order_id=live_entry_order_id,
+        live_entry_order_link_id=live_entry_order_link_id,
     )
 
 
@@ -248,6 +254,9 @@ class FakeEntryRepository:
         self.rejections = 0
         self.claimed_leverage: Decimal | None = None
         self.opened_qty: Decimal | None = None
+        self.pending_order_id: str | None = None
+        self.pending_price: Decimal | None = None
+        self.cancelled_error: str | None = None
 
     async def claim_entry(self, *_: object, **__: object) -> int:
         self.claims += 1
@@ -261,18 +270,34 @@ class FakeEntryRepository:
     async def mark_failed(self, *_: object, **kwargs: object) -> None:
         self.failed_error = str(kwargs["error"])
 
+    async def mark_entry_pending(self, *_: object, **kwargs: object) -> None:
+        self.pending_order_id = str(kwargs["order_id"])
+        self.pending_price = kwargs["limit_price"]  # type: ignore[assignment]
+
+    async def mark_entry_cancelled(self, *_: object, **kwargs: object) -> None:
+        self.cancelled_error = str(kwargs["error"])
+
     async def mark_entry_open(self, *_: object, **kwargs: object) -> None:
         self.opened_qty = kwargs["qty"]  # type: ignore[assignment]
 
 
 class FakeEntryClient:
-    def __init__(self, *, available_balance: Decimal) -> None:
+    def __init__(
+        self,
+        *,
+        available_balance: Decimal,
+        position_size: Decimal = Decimal(0),
+    ) -> None:
         self.available_balance = available_balance
         self.orders = 0
+        self.limit_orders = 0
+        self.cancellations = 0
         self.leverage_updates = 0
         self.leverage_values: list[Decimal] = []
         self.stop_updates = 0
         self.last_order_qty = Decimal(0)
+        self.last_limit_price = Decimal(0)
+        self.position_size = position_size
 
     async def get_wallet_balance(self, **_: object) -> Any:
         return type("Balance", (), {"total_available_balance": self.available_balance})()
@@ -286,11 +311,22 @@ class FakeEntryClient:
         self.last_order_qty = _["qty"]  # type: ignore[assignment]
         return type("Order", (), {"order_id": "entry-order"})()
 
+    async def place_limit_order(self, **kwargs: object) -> Any:
+        self.limit_orders += 1
+        self.last_order_qty = kwargs["qty"]  # type: ignore[assignment]
+        self.last_limit_price = kwargs["price"]  # type: ignore[assignment]
+        return type("Order", (), {"order_id": "entry-limit-order"})()
+
+    async def cancel_order(self, **_: object) -> None:
+        self.cancellations += 1
+
     async def get_linear_position(self, *, symbol: str) -> BybitPosition | None:
+        if self.position_size <= 0:
+            return None
         return BybitPosition(
             symbol=symbol,
             side="Buy",
-            size=self.last_order_qty,
+            size=self.position_size,
             average_price=Decimal("70.545"),
         )
 
@@ -387,13 +423,16 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
     assert repository.claims == 1
     assert repository.rejections == 0
     assert repository.claimed_leverage == Decimal("50")
-    assert repository.opened_qty == Decimal("135.5")
+    assert repository.pending_order_id == "entry-limit-order"
+    assert repository.pending_price == Decimal("70.54")
+    assert repository.opened_qty is None
     assert client.leverage_values == [Decimal("50")]
-    assert client.orders == 1
-    assert client.stop_updates == 1
+    assert client.orders == 0
+    assert client.limit_orders == 1
+    assert client.stop_updates == 0
 
 
-async def test_enter_rejects_live_order_when_price_slipped_above_entry_zone() -> None:
+async def test_enter_places_limit_order_even_when_market_moved_past_entry_zone() -> None:
     repository = FakeEntryRepository()
     client = FakeEntryClient(available_balance=Decimal("239.18205325"))
     service = LiveExecutionService(
@@ -420,20 +459,90 @@ async def test_enter_rejects_live_order_when_price_slipped_above_entry_zone() ->
             entry_upper=Decimal("0.217820"),
             planned_entry=Decimal("0.217280"),
             stop_loss=Decimal("0.216452301107601981"),
+            price_tick_size=Decimal("0.0001"),
             quantity_step=Decimal("1"),
             max_market_order_quantity=Decimal("1000000"),
             max_leverage=Decimal("100"),
         )
     )
 
-    assert repository.claims == 0
-    assert repository.rejections == 1
-    assert repository.rejected_error is not None
-    assert "live entry skipped" in repository.rejected_error
+    assert repository.claims == 1
+    assert repository.rejections == 0
+    assert repository.rejected_error is None
+    assert repository.pending_order_id == "entry-limit-order"
+    assert repository.pending_price == Decimal("0.2172")
     assert repository.failed_error is None
-    assert client.leverage_updates == 0
+    assert client.leverage_updates == 1
     assert client.orders == 0
+    assert client.limit_orders == 1
     assert client.stop_updates == 0
+
+
+async def test_pending_limit_marks_open_when_bybit_position_appears() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(
+        available_balance=Decimal("239.18205325"),
+        position_size=Decimal("135.5"),
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            symbol="SOLUSDT",
+            signal_status="entered",
+            live_id=7,
+            live_status="entry_pending",
+            live_remaining_qty=Decimal("135.5"),
+            live_entry_order_id="entry-limit-order",
+            live_entry_order_link_id="sp-1-entry",
+        )
+    )
+
+    assert repository.opened_qty == Decimal("135.5")
+    assert repository.cancelled_error is None
+    assert client.stop_updates == 1
+    assert client.cancellations == 0
+
+
+async def test_pending_limit_is_cancelled_when_signal_expires_before_fill() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(available_balance=Decimal("239.18205325"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            signal_status="expired",
+            live_id=7,
+            live_status="entry_pending",
+            live_remaining_qty=Decimal("135.5"),
+            live_entry_order_id="entry-limit-order",
+            live_entry_order_link_id="sp-1-entry",
+        )
+    )
+
+    assert repository.cancelled_error == "pending entry cancelled: signal status became expired"
+    assert repository.opened_qty is None
+    assert client.cancellations == 1
 
 
 async def test_close_marks_already_flat_position_closed_without_order() -> None:

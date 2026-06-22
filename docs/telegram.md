@@ -72,6 +72,9 @@ EXECUTION_MAX_DAILY_LOSS_USDT
 EXECUTION_MAX_SLIPPAGE_BPS
 ```
 
+The small-account live profile caps effective leverage at `45x` to avoid
+Bybit risk-tier rejection at `50x` on some high-notional setups.
+
 Use this command to inspect live execution settings:
 
 ```powershell
@@ -90,11 +93,14 @@ Virtual messages:
 Live messages:
 
 - `LIVE: SUBMITTING ORDER`: worker is preparing a real order.
+- `LIVE: LIMIT ORDER PLACED`: Bybit accepted a real GTC limit entry order; the
+  position is not open until Bybit reports non-zero size.
 - `LIVE: POSITION OPEN`: Bybit entry order was accepted and position size was
   detected.
 - `LIVE: TP1 HALF CLOSED`: reduce-only TP1 close was submitted.
 - `LIVE: POSITION CLOSED`: live position is closed.
-- `LIVE: EXECUTION FAILED`: live execution was skipped or failed.
+- `LIVE: EXECUTION FAILED`: a submitted live execution step failed and may need
+  operator review.
 - `LIVE: VIRTUAL ONLY`: the setup remains tracked virtually, but the bot did
   not submit a Bybit order because the pre-live guard rejected it.
 
@@ -105,4 +111,5 @@ When Bybit closed PnL is available, `LIVE: POSITION CLOSED` includes:
 - `Real exit`.
 
 If `LIVE: VIRTUAL ONLY` contains `live entry skipped`, no Bybit order was sent.
-This is usually a slippage guard, not a system crash.
+If it contains `pending entry cancelled`, the real limit entry was cancelled
+because the virtual signal finished before Bybit filled the order.

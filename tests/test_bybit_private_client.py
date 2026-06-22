@@ -134,6 +134,103 @@ async def test_place_market_order_signs_body_and_returns_order_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_place_limit_order_sends_price_and_gtc_time_in_force() -> None:
+    seen_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_body
+        seen_body = json.loads(request.content.decode())
+        assert request.url.path == "/v5/order/create"
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {"orderId": "limit-1", "orderLinkId": "sp-2-entry"},
+                "time": 1,
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitPrivateClient(
+        base_url="https://unused.test",
+        api_key="test-key",
+        api_secret="test-secret",
+        timeout_seconds=1,
+        http_client=http_client,
+        timestamp_ms=lambda: 1,
+    )
+
+    result = await client.place_limit_order(
+        symbol="zecusdt",
+        side="Sell",
+        qty=Decimal("23.0700"),
+        price=Decimal("455.01"),
+        order_link_id="sp-2-entry",
+    )
+    await http_client.aclose()
+
+    assert seen_body == {
+        "category": "linear",
+        "symbol": "ZECUSDT",
+        "side": "Sell",
+        "orderType": "Limit",
+        "qty": "23.07",
+        "price": "455.01",
+        "timeInForce": "GTC",
+        "positionIdx": 0,
+        "reduceOnly": False,
+        "orderLinkId": "sp-2-entry",
+    }
+    assert result.order_id == "limit-1"
+    assert result.order_link_id == "sp-2-entry"
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_uses_order_id_and_link_id_when_available() -> None:
+    seen_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_body
+        seen_body = json.loads(request.content.decode())
+        assert request.url.path == "/v5/order/cancel"
+        return httpx.Response(
+            200,
+            json={"retCode": 0, "retMsg": "OK", "result": {}, "time": 1},
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.bybit.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = BybitPrivateClient(
+        base_url="https://unused.test",
+        api_key="test-key",
+        api_secret="test-secret",
+        timeout_seconds=1,
+        http_client=http_client,
+        timestamp_ms=lambda: 1,
+    )
+
+    await client.cancel_order(
+        symbol="injusdt",
+        order_id="order-1",
+        order_link_id="sp-3-entry",
+    )
+    await http_client.aclose()
+
+    assert seen_body == {
+        "category": "linear",
+        "symbol": "INJUSDT",
+        "orderId": "order-1",
+        "orderLinkId": "sp-3-entry",
+    }
+
+
+@pytest.mark.asyncio
 async def test_set_linear_leverage_uses_position_endpoint() -> None:
     seen_body: dict[str, object] = {}
 
