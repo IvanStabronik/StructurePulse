@@ -287,8 +287,10 @@ class FakeEntryClient:
         *,
         available_balance: Decimal,
         position_size: Decimal = Decimal(0),
+        cancel_error: Exception | None = None,
     ) -> None:
         self.available_balance = available_balance
+        self.cancel_error = cancel_error
         self.orders = 0
         self.limit_orders = 0
         self.cancellations = 0
@@ -319,6 +321,8 @@ class FakeEntryClient:
 
     async def cancel_order(self, **_: object) -> None:
         self.cancellations += 1
+        if self.cancel_error is not None:
+            raise self.cancel_error
 
     async def get_linear_position(self, *, symbol: str) -> BybitPosition | None:
         if self.position_size <= 0:
@@ -541,6 +545,45 @@ async def test_pending_limit_is_cancelled_when_signal_expires_before_fill() -> N
     )
 
     assert repository.cancelled_error == "pending entry cancelled: signal status became expired"
+    assert repository.opened_qty is None
+    assert client.cancellations == 1
+
+
+async def test_missing_pending_limit_order_is_treated_as_cancelled_when_flat() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(
+        available_balance=Decimal("239.18205325"),
+        cancel_error=BybitPrivateAPIError(
+            "Bybit private error 110001: order not exists or too late to cancel"
+        ),
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            signal_status="expired",
+            live_id=7,
+            live_status="entry_pending",
+            live_remaining_qty=Decimal("135.5"),
+            live_entry_order_id="entry-limit-order",
+            live_entry_order_link_id="sp-1-entry",
+        )
+    )
+
+    assert repository.cancelled_error == (
+        "pending entry cancel confirmed absent: signal status became expired"
+    )
+    assert repository.failed_error is None
     assert repository.opened_qty is None
     assert client.cancellations == 1
 

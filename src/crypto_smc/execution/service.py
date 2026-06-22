@@ -279,6 +279,17 @@ class LiveExecutionService:
             if await self._live_position_size(signal.symbol) > 0:
                 await self._sync_pending_entry(signal)
                 return
+            if _is_order_missing_error(exc):
+                await self._repository.mark_entry_cancelled(
+                    self._session_factory,
+                    live_id=signal.live_id,
+                    error=(
+                        "pending entry cancel confirmed absent: "
+                        f"signal status became {signal.signal_status}"
+                    ),
+                    now=datetime.now(UTC),
+                )
+                return
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=signal.live_id,
@@ -572,6 +583,14 @@ def _is_already_flat_error(exc: Exception) -> bool:
         isinstance(exc, BybitPrivateAPIError)
         and "110017" in str(exc)
         and "position is zero" in str(exc).lower()
+    )
+
+
+def _is_order_missing_error(exc: Exception) -> bool:
+    return (
+        isinstance(exc, BybitPrivateAPIError)
+        and "110001" in str(exc)
+        and "order not exists" in str(exc).lower()
     )
 
 
