@@ -27,7 +27,7 @@ class TelegramUserSettingsRecord(Base):
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     language: Mapped[str] = mapped_column(String(2), default="ru", server_default="ru")
-    minimum_score: Mapped[int] = mapped_column(Integer, default=70, server_default="70")
+    minimum_score: Mapped[int] = mapped_column(Integer, default=85, server_default="85")
     schedule_timezone: Mapped[str] = mapped_column(
         String(64),
         default="Europe/Warsaw",

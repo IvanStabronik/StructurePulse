@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     runtime_shutdown_timeout_seconds: float = Field(default=15, gt=0, le=120)
     event_loop_probe_interval_seconds: float = Field(default=0.5, ge=0.1, le=10)
     event_loop_warning_seconds: float = Field(default=0.25, gt=0, le=10)
-    required_database_revision: str = "0012"
+    required_database_revision: str = "0013"
     migration_lock_timeout_seconds: int = Field(default=15, ge=1, le=300)
     migration_statement_timeout_seconds: int = Field(default=120, ge=10, le=3600)
     maintenance_interval_seconds: float = Field(default=86_400, ge=60, le=604_800)

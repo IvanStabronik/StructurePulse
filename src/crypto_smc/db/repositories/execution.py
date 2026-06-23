@@ -213,6 +213,7 @@ class LiveExecutionRepository:
         leverage: Decimal,
         error: str,
         now: datetime,
+        notify: bool = True,
     ) -> None:
         async with session_factory() as session, session.begin():
             existing = await session.scalar(
@@ -228,6 +229,7 @@ class LiveExecutionRepository:
                 leverage=leverage,
                 error=error,
                 now=now,
+                notify=notify,
             )
 
     async def claim_entry(
@@ -380,6 +382,7 @@ class LiveExecutionRepository:
         leverage: Decimal,
         error: str,
         now: datetime,
+        notify: bool = True,
     ) -> None:
         record = LiveExecutionRecord(
             signal_id=signal.signal_id,
@@ -397,21 +400,22 @@ class LiveExecutionRepository:
         )
         session.add(record)
         await session.flush()
-        await self._notify(
-            session,
-            signal_id=signal.signal_id,
-            event_type="live_entry_skipped",
-            idempotency_key=f"live:{signal.signal_id}:skipped:{record.id}",
-            now=now,
-            payload=_payload(
-                signal,
-                qty=qty,
-                status="skipped",
-                risk_usdt=risk_usdt,
-                leverage=leverage,
+        if notify:
+            await self._notify(
+                session,
+                signal_id=signal.signal_id,
+                event_type="live_entry_skipped",
+                idempotency_key=f"live:{signal.signal_id}:skipped:{record.id}",
+                now=now,
+                payload=_payload(
+                    signal,
+                    qty=qty,
+                    status="skipped",
+                    risk_usdt=risk_usdt,
+                    leverage=leverage,
+                )
+                | {"error": record.error},
             )
-            | {"error": record.error},
-        )
 
     async def mark_entry_open(
         self,
@@ -611,6 +615,7 @@ def _payload(
         "signal_id": signal.signal_id,
         "symbol": signal.symbol,
         "direction": signal.direction,
+        "score": signal.score,
         "status": status,
         "qty": str(qty),
         "risk_usdt": str(risk_usdt),

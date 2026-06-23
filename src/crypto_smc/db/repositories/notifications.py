@@ -396,11 +396,11 @@ def delivery_policy(
 ) -> tuple[str, str | None]:
     if user.paused:
         return "skipped", "notifications_paused"
+    raw_score = outbox.payload.get("score")
+    if raw_score is not None and int(raw_score) < user.minimum_score:
+        return "skipped", "below_score_threshold"
     if outbox.event_type != "new_signal":
         return "pending", None
-    score = int(outbox.payload.get("score", 0))
-    if score < user.minimum_score:
-        return "skipped", "below_score_threshold"
     if not notification_window_is_open(
         now,
         timezone=user.schedule_timezone,

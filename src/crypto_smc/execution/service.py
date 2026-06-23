@@ -135,6 +135,7 @@ class LiveExecutionService:
                     f"signal score {signal.score} is below live minimum {self._min_signal_score}"
                 ),
                 now=now,
+                notify=False,
             )
             return
         if not self._symbol_allowed(signal.symbol):

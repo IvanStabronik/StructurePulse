@@ -33,7 +33,7 @@ def settings(*, language: str = "ru", paused: bool = False) -> TelegramUserSetti
     return TelegramUserSettings(
         user_id=42,
         language=language,
-        minimum_score=70,
+        minimum_score=85,
         schedule_timezone="Europe/Warsaw",
         schedule_start=time(7),
         schedule_end=time(20),
@@ -98,6 +98,11 @@ def test_warsaw_schedule_and_delivery_filters_are_deterministic() -> None:
         "below_score_threshold",
     )
     outbox.event_type = "signal_result"
+    assert delivery_policy(outbox, user, now=NOW) == (
+        "skipped",
+        "below_score_threshold",
+    )
+    outbox.payload = {"status": "ready"}
     assert delivery_policy(outbox, user, now=NOW) == ("pending", None)
 
 

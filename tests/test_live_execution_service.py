@@ -259,6 +259,7 @@ class FakeEntryRepository:
         self.rejected_error: str | None = None
         self.claims = 0
         self.rejections = 0
+        self.rejected_notify: bool | None = None
         self.claimed_leverage: Decimal | None = None
         self.opened_qty: Decimal | None = None
         self.pending_order_id: str | None = None
@@ -279,6 +280,7 @@ class FakeEntryRepository:
     async def reject_entry(self, *_: object, **kwargs: object) -> None:
         self.rejections += 1
         self.rejected_error = str(kwargs["error"])
+        self.rejected_notify = kwargs.get("notify")  # type: ignore[assignment]
 
     async def mark_failed(self, *_: object, **kwargs: object) -> None:
         self.failed_error = str(kwargs["error"])
@@ -556,6 +558,7 @@ async def test_enter_rejects_low_score_for_live_execution() -> None:
     assert repository.rejections == 1
     assert repository.rejected_error is not None
     assert "below live minimum 85" in repository.rejected_error
+    assert repository.rejected_notify is False
     assert client.limit_orders == 0
 
 
