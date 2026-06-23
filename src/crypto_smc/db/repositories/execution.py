@@ -502,6 +502,7 @@ class LiveExecutionRepository:
         real_pnl: Decimal | None = None,
         real_entry_price: Decimal | None = None,
         real_exit_price: Decimal | None = None,
+        error: str | None = None,
         now: datetime,
     ) -> None:
         async with session_factory() as session, session.begin():
@@ -510,21 +511,23 @@ class LiveExecutionRepository:
             record.close_order_id = order_id
             record.close_order_link_id = f"sp-{record.signal_id}-close"
             record.remaining_qty = Decimal(0)
-            record.error = None
+            record.error = error[:2000] if error else None
             record.closed_at = now
             record.updated_at = now
+            payload = _live_payload(record) | _real_pnl_payload(
+                real_pnl=real_pnl,
+                real_entry_price=real_entry_price,
+                real_exit_price=real_exit_price,
+            )
+            if record.error:
+                payload["error"] = record.error
             await self._notify(
                 session,
                 signal_id=record.signal_id,
                 event_type="live_position_closed",
                 idempotency_key=f"live:{record.signal_id}:closed",
                 now=now,
-                payload=_live_payload(record)
-                | _real_pnl_payload(
-                    real_pnl=real_pnl,
-                    real_entry_price=real_entry_price,
-                    real_exit_price=real_exit_price,
-                ),
+                payload=payload,
             )
 
     async def mark_failed(

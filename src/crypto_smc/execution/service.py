@@ -11,7 +11,7 @@ from crypto_smc.db.repositories.execution import (
     LiveExecutionRepository,
     LiveSignalView,
 )
-from crypto_smc.providers.bybit import BybitPrivateAPIError, BybitPrivateClient
+from crypto_smc.providers.bybit import BybitOrderResult, BybitPrivateAPIError, BybitPrivateClient
 from crypto_smc.providers.protocols import MarketTickerProvider
 
 logger = structlog.get_logger(__name__)
@@ -260,11 +260,44 @@ class LiveExecutionService:
                 stop_loss=signal.stop_loss,
             )
         except Exception as exc:
-            await self._emergency_close(signal.symbol, _close_side(signal.direction), actual_qty)
+            close_result = await self._emergency_close(
+                signal.symbol,
+                _close_side(signal.direction),
+                actual_qty,
+            )
+            if close_result is not None:
+                real_pnl = await self._closed_pnl(signal.symbol, order_id=close_result.order_id)
+                await self._repository.mark_closed(
+                    self._session_factory,
+                    live_id=resolved_live_id,
+                    order_id=close_result.order_id,
+                    real_pnl=real_pnl[0],
+                    real_entry_price=real_pnl[1],
+                    real_exit_price=real_pnl[2],
+                    error=f"protective stop rejected; emergency close submitted: {exc}",
+                    now=datetime.now(UTC),
+                )
+                return
+            if await self._live_position_size(signal.symbol) <= 0:
+                real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+                await self._repository.mark_closed(
+                    self._session_factory,
+                    live_id=resolved_live_id,
+                    order_id="",
+                    real_pnl=real_pnl[0],
+                    real_entry_price=real_pnl[1],
+                    real_exit_price=real_pnl[2],
+                    error=(
+                        "protective stop rejected; position is flat after "
+                        f"emergency close attempt: {exc}"
+                    ),
+                    now=datetime.now(UTC),
+                )
+                return
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=resolved_live_id,
-                error=str(exc),
+                error=f"protective stop rejected and emergency close failed: {exc}",
                 now=datetime.now(UTC),
             )
             return
@@ -348,14 +381,28 @@ class LiveExecutionService:
             )
 
     async def _take_profit_1(self, signal: LiveSignalView) -> None:
-        if signal.live_id is None or signal.live_remaining_qty is None:
+        if signal.live_id is None:
             return
         if not await self._repository.claim_tp1(self._session_factory, live_id=signal.live_id):
             return
         close_side = _close_side(signal.direction)
-        close_qty = _round_down(signal.live_remaining_qty / Decimal(2), signal.quantity_step)
+        actual_qty = await self._live_position_size(signal.symbol)
+        if actual_qty <= 0:
+            real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+            await self._repository.mark_closed(
+                self._session_factory,
+                live_id=signal.live_id,
+                order_id="",
+                real_pnl=real_pnl[0],
+                real_entry_price=real_pnl[1],
+                real_exit_price=real_pnl[2],
+                error="tp1 requested but Bybit position is already flat",
+                now=datetime.now(UTC),
+            )
+            return
+        close_qty = _round_down(actual_qty / Decimal(2), signal.quantity_step)
         if close_qty < signal.min_order_quantity:
-            close_qty = signal.live_remaining_qty
+            close_qty = actual_qty
         try:
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
@@ -364,12 +411,38 @@ class LiveExecutionService:
                 order_link_id=f"sp-{signal.signal_id}-tp1",
                 reduce_only=True,
             )
-            remaining_qty = max(Decimal(0), signal.live_remaining_qty - close_qty)
+            remaining_qty = max(Decimal(0), actual_qty - close_qty)
             await self._client.set_full_position_stop(
                 symbol=signal.symbol,
                 stop_loss=signal.current_stop,
             )
         except Exception as exc:
+            post_error_qty = await self._live_position_size(signal.symbol)
+            if post_error_qty > 0:
+                close_result = await self._emergency_close(
+                    signal.symbol,
+                    close_side,
+                    post_error_qty,
+                )
+                if close_result is not None:
+                    real_pnl = await self._closed_pnl(
+                        signal.symbol,
+                        order_id=close_result.order_id,
+                    )
+                    await self._repository.mark_closed(
+                        self._session_factory,
+                        live_id=signal.live_id,
+                        order_id=close_result.order_id,
+                        real_pnl=real_pnl[0],
+                        real_entry_price=real_pnl[1],
+                        real_exit_price=real_pnl[2],
+                        error=(
+                            "tp1 protective stop update failed; "
+                            f"emergency close submitted: {exc}"
+                        ),
+                        now=datetime.now(UTC),
+                    )
+                    return
             await self._repository.mark_failed(
                 self._session_factory,
                 live_id=signal.live_id,
@@ -406,12 +479,11 @@ class LiveExecutionService:
                 now=datetime.now(UTC),
             )
             return
-        qty = min(qty, actual_qty)
         try:
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
                 side=close_side,
-                qty=qty,
+                qty=actual_qty,
                 order_link_id=f"sp-{signal.signal_id}-close",
                 reduce_only=True,
             )
@@ -486,9 +558,9 @@ class LiveExecutionService:
         symbol: str,
         side: Literal["Buy", "Sell"],
         qty: Decimal,
-    ) -> None:
+    ) -> BybitOrderResult | None:
         try:
-            await self._client.place_market_order(
+            return await self._client.place_market_order(
                 symbol=symbol,
                 side=side,
                 qty=qty,
@@ -497,6 +569,7 @@ class LiveExecutionService:
             )
         except Exception:
             await logger.aexception("live_execution_emergency_close_failed", symbol=symbol)
+            return None
 
     async def _entry_execution_price(self, signal: LiveSignalView) -> Decimal | None:
         if self._ticker_provider is None:

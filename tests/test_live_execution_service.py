@@ -217,6 +217,7 @@ class FakeCloseClient:
         self.position_size = position_size
         self.close_error = close_error
         self.close_orders = 0
+        self.last_order_qty = Decimal(0)
 
     async def get_linear_position(self, *, symbol: str) -> BybitPosition | None:
         if self.position_size <= 0:
@@ -230,6 +231,7 @@ class FakeCloseClient:
 
     async def place_market_order(self, **_: object) -> Any:
         self.close_orders += 1
+        self.last_order_qty = _["qty"]  # type: ignore[assignment]
         if self.close_error is not None:
             raise self.close_error
         return type("Order", (), {"order_id": "close-order"})()
@@ -260,6 +262,12 @@ class FakeEntryRepository:
         self.pending_order_id: str | None = None
         self.pending_price: Decimal | None = None
         self.cancelled_error: str | None = None
+        self.closed_order_id: str | None = None
+        self.closed_error: str | None = None
+        self.real_pnl: Decimal | None = None
+        self.tp1_claims = 0
+        self.tp1_order_id: str | None = None
+        self.tp1_remaining_qty: Decimal | None = None
 
     async def claim_entry(self, *_: object, **__: object) -> int:
         self.claims += 1
@@ -283,6 +291,19 @@ class FakeEntryRepository:
     async def mark_entry_open(self, *_: object, **kwargs: object) -> None:
         self.opened_qty = kwargs["qty"]  # type: ignore[assignment]
 
+    async def mark_closed(self, *_: object, **kwargs: object) -> None:
+        self.closed_order_id = str(kwargs["order_id"])
+        self.closed_error = kwargs.get("error")  # type: ignore[assignment]
+        self.real_pnl = kwargs.get("real_pnl")  # type: ignore[assignment]
+
+    async def claim_tp1(self, *_: object, **__: object) -> bool:
+        self.tp1_claims += 1
+        return True
+
+    async def mark_tp1_reduced(self, *_: object, **kwargs: object) -> None:
+        self.tp1_order_id = str(kwargs["order_id"])
+        self.tp1_remaining_qty = kwargs["remaining_qty"]  # type: ignore[assignment]
+
 
 class FakeEntryClient:
     def __init__(
@@ -291,9 +312,11 @@ class FakeEntryClient:
         available_balance: Decimal,
         position_size: Decimal = Decimal(0),
         cancel_error: Exception | None = None,
+        stop_error: Exception | None = None,
     ) -> None:
         self.available_balance = available_balance
         self.cancel_error = cancel_error
+        self.stop_error = stop_error
         self.orders = 0
         self.limit_orders = 0
         self.cancellations = 0
@@ -339,6 +362,22 @@ class FakeEntryClient:
 
     async def set_full_position_stop(self, **_: object) -> None:
         self.stop_updates += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+
+    async def get_closed_pnl(self, **_: object) -> tuple[Any, ...]:
+        return (
+            type(
+                "ClosedPnl",
+                (),
+                {
+                    "order_id": "entry-order",
+                    "closed_pnl": Decimal("-0.7"),
+                    "average_entry_price": Decimal("0.6931"),
+                    "average_exit_price": Decimal("0.6929"),
+                },
+            )(),
+        )
 
 
 class FakeTickerProvider:
@@ -519,6 +558,87 @@ async def test_pending_limit_marks_open_when_bybit_position_appears() -> None:
     assert repository.cancelled_error is None
     assert client.stop_updates == 1
     assert client.cancellations == 0
+
+
+async def test_pending_limit_emergency_closes_when_stop_is_rejected() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(
+        available_balance=Decimal("239.18205325"),
+        position_size=Decimal("83.8"),
+        stop_error=BybitPrivateAPIError(
+            "Bybit private error 10001: StopLoss should lower than LastPrice"
+        ),
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("20"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            symbol="SUIUSDT",
+            signal_status="entered",
+            live_id=7,
+            live_status="entry_pending",
+            live_remaining_qty=Decimal("83.8"),
+            live_entry_order_id="entry-limit-order",
+            live_entry_order_link_id="sp-1-entry",
+            stop_loss=Decimal("0.6936"),
+        )
+    )
+
+    assert repository.opened_qty is None
+    assert repository.failed_error is None
+    assert repository.closed_order_id == "entry-order"
+    assert repository.real_pnl == Decimal("-0.7")
+    assert repository.closed_error is not None
+    assert "protective stop rejected" in repository.closed_error
+    assert client.orders == 1
+    assert client.last_order_qty == Decimal("83.8")
+    assert client.stop_updates == 1
+
+
+async def test_tp1_uses_actual_bybit_position_when_database_qty_is_stale() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(
+        available_balance=Decimal("239.18205325"),
+        position_size=Decimal("103.3"),
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("20"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._take_profit_1(
+        signal_view(
+            symbol="SOLUSDT",
+            direction="short",
+            signal_status="tp1_reached",
+            live_id=7,
+            live_status="open",
+            live_remaining_qty=Decimal("12.9"),
+            quantity_step=Decimal("0.1"),
+        )
+    )
+
+    assert repository.tp1_order_id == "entry-order"
+    assert repository.tp1_remaining_qty == Decimal("51.7")
+    assert client.last_order_qty == Decimal("51.6")
+    assert client.stop_updates == 1
 
 
 async def test_pending_limit_is_cancelled_when_signal_expires_before_fill() -> None:
@@ -725,3 +845,36 @@ async def test_close_includes_real_pnl_for_submitted_close_order() -> None:
     assert repository.closed_order_id == "close-order"
     assert repository.real_pnl == Decimal("4.2")
     assert client.close_orders == 1
+
+
+async def test_close_uses_actual_bybit_position_when_database_qty_is_stale() -> None:
+    repository = FakeCloseRepository()
+    client = FakeCloseClient(position_size=Decimal("103.3"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("10"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._close(
+        signal_view(
+            symbol="SOLUSDT",
+            direction="short",
+            signal_status="stopped_at_breakeven",
+            live_id=1,
+            live_status="tp1_reduced",
+            live_remaining_qty=Decimal("6.5"),
+            quantity_step=Decimal("0.1"),
+        )
+    )
+
+    assert repository.closed is True
+    assert repository.closed_order_id == "close-order"
+    assert client.close_orders == 1
+    assert client.last_order_qty == Decimal("103.3")
