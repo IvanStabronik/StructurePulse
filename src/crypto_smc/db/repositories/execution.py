@@ -10,6 +10,7 @@ from crypto_smc.db.models import (
     InstrumentRecord,
     LiveExecutionRecord,
     NotificationOutboxRecord,
+    SignalCandidateRecord,
     SignalRecord,
     VirtualTradeRecord,
 )
@@ -42,6 +43,7 @@ class LiveSignalView:
     signal_id: int
     symbol: str
     direction: str
+    score: int
     signal_status: str
     entry_lower: Decimal
     entry_upper: Decimal
@@ -102,10 +104,12 @@ class LiveExecutionRepository:
                 SignalRecord,
                 VirtualTradeRecord,
                 InstrumentRecord,
+                SignalCandidateRecord.score,
                 LiveExecutionRecord,
             )
             .join(VirtualTradeRecord, VirtualTradeRecord.signal_id == SignalRecord.id)
             .join(InstrumentRecord, InstrumentRecord.symbol == SignalRecord.symbol)
+            .join(SignalCandidateRecord, SignalCandidateRecord.id == SignalRecord.candidate_id)
             .outerjoin(
                 LiveExecutionRecord,
                 LiveExecutionRecord.signal_id == SignalRecord.id,
@@ -124,11 +128,12 @@ class LiveExecutionRepository:
 
     @staticmethod
     def _view(row: Any) -> LiveSignalView:
-        signal, trade, instrument, live = row
+        signal, trade, instrument, score, live = row
         return LiveSignalView(
             signal_id=signal.id,
             symbol=signal.symbol,
             direction=signal.direction,
+            score=score,
             signal_status=signal.status,
             entry_lower=signal.entry_lower,
             entry_upper=signal.entry_upper,
@@ -511,6 +516,9 @@ class LiveExecutionRepository:
             record.close_order_id = order_id
             record.close_order_link_id = f"sp-{record.signal_id}-close"
             record.remaining_qty = Decimal(0)
+            record.real_pnl = real_pnl
+            record.real_entry_price = real_entry_price
+            record.real_exit_price = real_exit_price
             record.error = error[:2000] if error else None
             record.closed_at = now
             record.updated_at = now

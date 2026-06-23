@@ -18,6 +18,7 @@ def signal_view(
     *,
     symbol: str = "BTCUSDT",
     direction: str = "long",
+    score: int = 90,
     signal_status: str = "entered",
     entry_lower: Decimal = Decimal("99"),
     entry_upper: Decimal = Decimal("101"),
@@ -40,6 +41,7 @@ def signal_view(
         signal_id=1,
         symbol=symbol,
         direction=direction,
+        score=score,
         signal_status=signal_status,
         entry_lower=entry_lower,
         entry_upper=entry_upper,
@@ -328,7 +330,14 @@ class FakeEntryClient:
         self.position_size = position_size
 
     async def get_wallet_balance(self, **_: object) -> Any:
-        return type("Balance", (), {"total_available_balance": self.available_balance})()
+        return type(
+            "Balance",
+            (),
+            {
+                "total_available_balance": self.available_balance,
+                "total_wallet_balance": self.available_balance,
+            },
+        )()
 
     async def set_linear_leverage(self, **kwargs: object) -> None:
         self.leverage_updates += 1
@@ -451,6 +460,7 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
         poll_interval_seconds=1,
         min_risk_usdt=Decimal("15"),
         max_effective_leverage=Decimal("50"),
+        max_notional_to_wallet_ratio=Decimal("100"),
         repository=repository,  # type: ignore[arg-type]
     )
 
@@ -492,6 +502,7 @@ async def test_enter_places_limit_order_even_when_market_moved_past_entry_zone()
         poll_interval_seconds=1,
         min_risk_usdt=Decimal("15"),
         max_effective_leverage=Decimal("50"),
+        max_notional_to_wallet_ratio=Decimal("100"),
         max_slippage_bps=Decimal("20"),
         ticker_provider=FakeTickerProvider(ask_price=Decimal("0.21805537")),
         repository=repository,  # type: ignore[arg-type]
@@ -522,6 +533,54 @@ async def test_enter_places_limit_order_even_when_market_moved_past_entry_zone()
     assert client.orders == 0
     assert client.limit_orders == 1
     assert client.stop_updates == 0
+
+
+async def test_enter_rejects_low_score_for_live_execution() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(available_balance=Decimal("1000"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("20"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        min_signal_score=85,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._enter(signal_view(score=80))
+
+    assert repository.rejections == 1
+    assert repository.rejected_error is not None
+    assert "below live minimum 85" in repository.rejected_error
+    assert client.limit_orders == 0
+
+
+async def test_enter_rejects_notional_above_wallet_cap() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(available_balance=Decimal("1000"))
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("20"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("100"),
+        poll_interval_seconds=1,
+        max_notional_to_wallet_ratio=Decimal("3"),
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._enter(signal_view(planned_entry=Decimal("100"), stop_loss=Decimal("99.8")))
+
+    assert repository.rejections == 1
+    assert repository.rejected_error is not None
+    assert "exceeds 3x wallet cap" in repository.rejected_error
+    assert client.limit_orders == 0
 
 
 async def test_pending_limit_marks_open_when_bybit_position_appears() -> None:

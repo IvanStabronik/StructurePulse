@@ -355,7 +355,20 @@ class FakeQueries:
         )
 
     async def stats(self, _: object) -> PerformanceStats:
-        return PerformanceStats(10, 6, 1, Decimal("250.5"), Decimal("0.4"))
+        return PerformanceStats(
+            completed=10,
+            wins=6,
+            ambiguous=1,
+            pnl=Decimal("250.5"),
+            average_r=Decimal("0.4"),
+            live_total=8,
+            live_submitted=4,
+            live_closed=2,
+            live_skipped=3,
+            live_failed=1,
+            live_known_real_pnl=Decimal("12.34"),
+            live_known_real_count=2,
+        )
 
     async def status(self, _: object) -> ServiceStatus:
         return ServiceStatus(30, 0, 1, 0, 0)
@@ -380,6 +393,7 @@ async def test_commands_support_localization_and_settings_updates() -> None:
     changed = await service.handle(42, "/language en")
     schedule = await service.handle(42, "/schedule 08:00 19:30 Europe/Warsaw")
     risk = await service.handle(42, "/risk 1.5 12000")
+    stats = await service.handle(42, "/stats")
     paused = await service.handle(42, "/pause")
 
     assert "Активный сигнал" in signals
@@ -387,6 +401,8 @@ async def test_commands_support_localization_and_settings_updates() -> None:
     assert "Language: en" in changed
     assert "08:00-19:30" in schedule
     assert "1.5%" in risk
+    assert "Live" in stats
+    assert "12.3400 USDT" in stats
     assert paused == "Notifications paused."
     assert settings_repository.current is not None
     assert settings_repository.current.paused is True

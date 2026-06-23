@@ -27,6 +27,16 @@ def test_settings_parse_empty_and_json_universe_denylist() -> None:
     )
 
 
+def test_settings_parse_execution_symbol_lists_as_usdt_symbols() -> None:
+    settings = Settings(
+        execution_symbol_allowlist="btc, ETHUSDT",
+        execution_symbol_denylist="[ada, sui]",
+    )
+
+    assert settings.execution_symbol_allowlist == frozenset({"BTCUSDT", "ETHUSDT"})
+    assert settings.execution_symbol_denylist == frozenset({"ADAUSDT", "SUIUSDT"})
+
+
 def test_settings_normalize_log_level() -> None:
     settings = Settings(log_level="debug")
 
@@ -48,7 +58,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.telegram_schedule_start == time(7, 0)
     assert settings.telegram_schedule_end == time(20, 0)
     assert settings.signal_trade_checkpoint_interval_seconds == 1
-    assert settings.required_database_revision == "0011"
+    assert settings.required_database_revision == "0012"
     assert settings.runtime_shutdown_timeout_seconds == 15
     assert settings.maintenance_candle_1m_retention_days == 180
     assert settings.operational_warning_cooldown_seconds == 1800
@@ -65,6 +75,12 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_max_daily_loss_usdt == 10
     assert settings.execution_poll_interval_seconds == 1
     assert settings.execution_max_effective_leverage == 45
+    assert settings.execution_min_signal_score == 85
+    assert settings.execution_max_notional_to_wallet_ratio == 5
+    assert settings.execution_symbol_allowlist == frozenset()
+    assert settings.execution_symbol_denylist == frozenset()
+    assert settings.execution_tp1_close_fraction == Decimal("0.5")
+    assert settings.execution_move_stop_to_be_after_tp1 is True
     assert settings.execution_pending_entry_timeout_seconds == 1200
 
 

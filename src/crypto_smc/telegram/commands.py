@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crypto_smc.db.models import (
     DataCheckpointRecord,
+    LiveExecutionRecord,
     NotificationDeliveryRecord,
     SignalCandidateRecord,
     SignalRecord,
@@ -59,6 +60,13 @@ class PerformanceStats:
     ambiguous: int
     pnl: Decimal
     average_r: Decimal
+    live_total: int
+    live_submitted: int
+    live_closed: int
+    live_skipped: int
+    live_failed: int
+    live_known_real_pnl: Decimal
+    live_known_real_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,12 +169,47 @@ class TelegramQueryRepository:
                     ).where(VirtualTradeRecord.status.in_(TERMINAL_TRADE_STATUSES))
                 )
             ).one()
+            live_rows = (
+                await session.execute(
+                    select(LiveExecutionRecord.status, func.count()).group_by(
+                        LiveExecutionRecord.status
+                    )
+                )
+            ).all()
+            live_pnl_row = (
+                await session.execute(
+                    select(
+                        func.coalesce(func.sum(LiveExecutionRecord.real_pnl), 0),
+                        func.count(LiveExecutionRecord.real_pnl),
+                    ).where(
+                        LiveExecutionRecord.real_pnl.is_not(None),
+                    )
+                )
+            ).one()
+        live_counts = {status: int(count) for status, count in live_rows}
         return PerformanceStats(
             completed=int(row[0]),
             wins=int(row[1]),
             ambiguous=int(row[2]),
             pnl=Decimal(row[3]),
             average_r=Decimal(row[4]),
+            live_total=sum(live_counts.values()),
+            live_submitted=sum(
+                live_counts.get(status, 0)
+                for status in (
+                    "entry_pending",
+                    "open",
+                    "tp1_reduced",
+                    "closed",
+                    "closing",
+                    "tp1_submitting",
+                )
+            ),
+            live_closed=live_counts.get("closed", 0),
+            live_skipped=live_counts.get("skipped", 0),
+            live_failed=live_counts.get("failed", 0),
+            live_known_real_pnl=Decimal(live_pnl_row[0]),
+            live_known_real_count=int(live_pnl_row[1]),
         )
 
     async def status(
@@ -393,7 +436,7 @@ def _render_coin(analysis: CoinAnalysis, language: str) -> str:
     )
 
 
-def _render_stats(stats: PerformanceStats, language: str) -> str:
+def _render_legacy_stats(stats: PerformanceStats, language: str) -> str:
     title = "Статистика" if language == "ru" else "Statistics"
     labels = (
         ("Завершено", "Победы", "Неоднозначные", "PnL", "Средний R")
@@ -408,6 +451,49 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
             f"{labels[2]}: {stats.ambiguous}",
             f"{labels[3]}: {stats.pnl:.4f} USDT",
             f"{labels[4]}: {stats.average_r:.4f}",
+        )
+    )
+
+
+def _render_stats(stats: PerformanceStats, language: str) -> str:
+    if language == "ru":
+        title = "Статистика"
+        labels = (
+            "Вирт. завершено",
+            "Вирт. победы",
+            "Неоднозначные",
+            "Вирт. PnL",
+            "Средний R",
+            "Live всего",
+            "Live отправлено",
+            "Live закрыто/skip/fail",
+            "Изв. real PnL",
+        )
+    else:
+        title = "Statistics"
+        labels = (
+            "Virtual completed",
+            "Virtual wins",
+            "Ambiguous",
+            "Virtual PnL",
+            "Average R",
+            "Live total",
+            "Live submitted",
+            "Live closed/skip/fail",
+            "Known real PnL",
+        )
+    return "\n".join(
+        (
+            title,
+            f"{labels[0]}: {stats.completed}",
+            f"{labels[1]}: {stats.wins}",
+            f"{labels[2]}: {stats.ambiguous}",
+            f"{labels[3]}: {stats.pnl:.4f} USDT",
+            f"{labels[4]}: {stats.average_r:.4f}",
+            f"{labels[5]}: {stats.live_total}",
+            f"{labels[6]}: {stats.live_submitted}",
+            (f"{labels[7]}: {stats.live_closed}/{stats.live_skipped}/{stats.live_failed}"),
+            f"{labels[8]}: {stats.live_known_real_pnl:.4f} USDT ({stats.live_known_real_count})",
         )
     )
 

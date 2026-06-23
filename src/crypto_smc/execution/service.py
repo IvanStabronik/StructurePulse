@@ -34,6 +34,12 @@ class LiveExecutionService:
         min_risk_usdt: Decimal = Decimal("20"),
         max_effective_leverage: Decimal = Decimal("50"),
         max_slippage_bps: Decimal = Decimal("20"),
+        min_signal_score: int = 85,
+        max_notional_to_wallet_ratio: Decimal = Decimal("5"),
+        symbol_allowlist: frozenset[str] = frozenset(),
+        symbol_denylist: frozenset[str] = frozenset(),
+        tp1_close_fraction: Decimal = Decimal("0.5"),
+        move_stop_to_be_after_tp1: bool = True,
         ticker_provider: MarketTickerProvider | None = None,
         repository: LiveExecutionRepository | None = None,
     ) -> None:
@@ -45,6 +51,12 @@ class LiveExecutionService:
         self._leverage = leverage
         self._max_effective_leverage = max(Decimal(1), max_effective_leverage)
         self._max_slippage_bps = max(Decimal(0), max_slippage_bps)
+        self._min_signal_score = min_signal_score
+        self._max_notional_to_wallet_ratio = max(Decimal(1), max_notional_to_wallet_ratio)
+        self._symbol_allowlist = frozenset(item.upper() for item in symbol_allowlist)
+        self._symbol_denylist = frozenset(item.upper() for item in symbol_denylist)
+        self._tp1_close_fraction = min(max(tp1_close_fraction, Decimal("0.01")), Decimal("1"))
+        self._move_stop_to_be_after_tp1 = move_stop_to_be_after_tp1
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
@@ -112,6 +124,30 @@ class LiveExecutionService:
 
     async def _enter(self, signal: LiveSignalView) -> None:
         now = datetime.now(UTC)
+        if signal.score < self._min_signal_score:
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=self._risk_usdt,
+                qty=Decimal(0),
+                leverage=_effective_max_leverage(signal, self._max_effective_leverage),
+                error=(
+                    f"signal score {signal.score} is below live minimum {self._min_signal_score}"
+                ),
+                now=now,
+            )
+            return
+        if not self._symbol_allowed(signal.symbol):
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=self._risk_usdt,
+                qty=Decimal(0),
+                leverage=_effective_max_leverage(signal, self._max_effective_leverage),
+                error=f"symbol {signal.symbol} is disabled for live execution",
+                now=now,
+            )
+            return
         balance = await self._client.get_wallet_balance(coin="USDT")
         risk_usdt = _risk_for_available_margin(
             signal,
@@ -140,6 +176,22 @@ class LiveExecutionService:
         if qty is None:
             return
         notional = qty * signal.planned_entry
+        wallet_balance = max(balance.total_wallet_balance, balance.total_available_balance)
+        max_notional = wallet_balance * self._max_notional_to_wallet_ratio
+        if notional > max_notional:
+            await self._repository.reject_entry(
+                self._session_factory,
+                signal=signal,
+                risk_usdt=risk_usdt,
+                qty=qty,
+                leverage=_effective_max_leverage(signal, self._max_effective_leverage),
+                error=(
+                    f"notional {notional} USDT exceeds {self._max_notional_to_wallet_ratio}x "
+                    f"wallet cap {max_notional} USDT"
+                ),
+                now=now,
+            )
+            return
         leverage = _select_leverage(
             notional=notional,
             configured_leverage=self._leverage,
@@ -400,9 +452,10 @@ class LiveExecutionService:
                 now=datetime.now(UTC),
             )
             return
-        close_qty = _round_down(actual_qty / Decimal(2), signal.quantity_step)
+        close_qty = _round_down(actual_qty * self._tp1_close_fraction, signal.quantity_step)
         if close_qty < signal.min_order_quantity:
             close_qty = actual_qty
+        next_stop = signal.current_stop if self._move_stop_to_be_after_tp1 else signal.stop_loss
         try:
             result = await self._client.place_market_order(
                 symbol=signal.symbol,
@@ -414,7 +467,7 @@ class LiveExecutionService:
             remaining_qty = max(Decimal(0), actual_qty - close_qty)
             await self._client.set_full_position_stop(
                 symbol=signal.symbol,
-                stop_loss=signal.current_stop,
+                stop_loss=next_stop,
             )
         except Exception as exc:
             post_error_qty = await self._live_position_size(signal.symbol)
@@ -437,8 +490,7 @@ class LiveExecutionService:
                         real_entry_price=real_pnl[1],
                         real_exit_price=real_pnl[2],
                         error=(
-                            "tp1 protective stop update failed; "
-                            f"emergency close submitted: {exc}"
+                            f"tp1 protective stop update failed; emergency close submitted: {exc}"
                         ),
                         now=datetime.now(UTC),
                     )
@@ -455,9 +507,15 @@ class LiveExecutionService:
             live_id=signal.live_id,
             order_id=result.order_id,
             remaining_qty=remaining_qty,
-            current_stop=signal.current_stop,
+            current_stop=next_stop,
             now=datetime.now(UTC),
         )
+
+    def _symbol_allowed(self, symbol: str) -> bool:
+        normalized = symbol.upper()
+        if normalized in self._symbol_denylist:
+            return False
+        return not self._symbol_allowlist or normalized in self._symbol_allowlist
 
     async def _close(self, signal: LiveSignalView) -> None:
         if signal.live_id is None:

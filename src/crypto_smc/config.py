@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     runtime_shutdown_timeout_seconds: float = Field(default=15, gt=0, le=120)
     event_loop_probe_interval_seconds: float = Field(default=0.5, ge=0.1, le=10)
     event_loop_warning_seconds: float = Field(default=0.25, gt=0, le=10)
-    required_database_revision: str = "0011"
+    required_database_revision: str = "0012"
     migration_lock_timeout_seconds: int = Field(default=15, ge=1, le=300)
     migration_statement_timeout_seconds: int = Field(default=120, ge=10, le=3600)
     maintenance_interval_seconds: float = Field(default=86_400, ge=60, le=604_800)
@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     execution_max_slippage_bps: Decimal = Field(default=Decimal("20"), ge=0, le=1000)
     execution_leverage: Decimal = Field(default=Decimal("1"), ge=1, le=100)
     execution_max_effective_leverage: Decimal = Field(default=Decimal("45"), ge=1, le=100)
+    execution_min_signal_score: int = Field(default=85, ge=0, le=100)
+    execution_max_notional_to_wallet_ratio: Decimal = Field(default=Decimal("5"), ge=1, le=100)
+    execution_symbol_allowlist: Annotated[frozenset[str], NoDecode] = frozenset()
+    execution_symbol_denylist: Annotated[frozenset[str], NoDecode] = frozenset()
+    execution_tp1_close_fraction: Decimal = Field(default=Decimal("0.5"), gt=0, le=1)
+    execution_move_stop_to_be_after_tp1: bool = True
     execution_pending_entry_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
     execution_poll_interval_seconds: float = Field(default=1, ge=0.2, le=30)
 
@@ -155,16 +161,37 @@ class Settings(BaseSettings):
     @field_validator("universe_manual_denylist", mode="before")
     @classmethod
     def parse_denylist(cls, value: object) -> object:
-        if value is None or value == "":
+        return _parse_upper_set(value)
+
+    @field_validator("execution_symbol_allowlist", "execution_symbol_denylist", mode="before")
+    @classmethod
+    def parse_execution_symbol_set(cls, value: object) -> object:
+        return _parse_symbol_set(value)
+
+
+def _parse_symbol_set(value: object) -> object:
+    parsed = _parse_upper_set(value)
+    if isinstance(parsed, frozenset):
+        return frozenset(_normalize_symbol(item) for item in parsed)
+    return parsed
+
+
+def _parse_upper_set(value: object) -> object:
+    if value is None or value == "":
+        return frozenset()
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized.startswith("[") and normalized.endswith("]"):
+            normalized = normalized[1:-1]
+        if not normalized:
             return frozenset()
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized.startswith("[") and normalized.endswith("]"):
-                normalized = normalized[1:-1]
-            if not normalized:
-                return frozenset()
-            return frozenset(item.strip().upper() for item in normalized.split(",") if item.strip())
-        return value
+        return frozenset(item.strip().upper() for item in normalized.split(",") if item.strip())
+    return value
+
+
+def _normalize_symbol(value: str) -> str:
+    symbol = value.upper()
+    return symbol if symbol.endswith("USDT") else f"{symbol}USDT"
 
 
 @lru_cache
