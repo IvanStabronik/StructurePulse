@@ -40,7 +40,7 @@ class StrategyConfig:
     maximum_display_leverage: Decimal = Decimal(20)
     liquidation_buffer_multiplier: Decimal = Decimal("1.5")
     stop_atr_buffer: Decimal = Decimal("0.10")
-    minimum_stop_percent: Decimal = Decimal("0.006")
+    minimum_stop_percent: Decimal = Decimal("0.004")
     take_profit_1_r_multiple: Decimal = Decimal("1.5")
     maximum_trade_notional_usdt: Decimal = Decimal(0)
     minimum_turnover_24h_usdt: Decimal = Decimal(10_000_000)

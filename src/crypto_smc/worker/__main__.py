@@ -255,7 +255,7 @@ def _strategy_config(
     profile: str,
     *,
     live_risk_usdt: Decimal | None = None,
-    minimum_stop_percent: Decimal = Decimal("0.006"),
+    minimum_stop_percent: Decimal = Decimal("0.004"),
     maximum_trade_notional_usdt: Decimal = Decimal(0),
 ) -> StrategyConfig:
     if profile == "aggressive_test":

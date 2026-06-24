@@ -82,7 +82,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_tp1_close_fraction == Decimal("0.5")
     assert settings.execution_move_stop_to_be_after_tp1 is True
     assert settings.execution_pending_entry_timeout_seconds == 1200
-    assert settings.strategy_minimum_stop_percent == Decimal("0.006")
+    assert settings.strategy_minimum_stop_percent == Decimal("0.004")
     assert settings.strategy_max_trade_notional_usdt == 0
 
 
@@ -91,8 +91,8 @@ def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:
 
     assert config.risk_amount == Decimal("50")
     assert config.reference_balance == Decimal("5000")
-    assert config.version == "smc-v1.1.2-aggressive-test-risk-50-stop-0p006-notional-0"
+    assert config.version == "smc-v1.1.2-aggressive-test-risk-50-stop-0p004-notional-0"
     assert config.require_15m_displacement is False
     assert config.require_entry_zone_retest is False
     assert config.ignore_active_evaluation_window is True
-    assert config.minimum_stop_percent == Decimal("0.006")
+    assert config.minimum_stop_percent == Decimal("0.004")
