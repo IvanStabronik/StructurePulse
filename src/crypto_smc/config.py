@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     strategy_minimum_history_candles: int = Field(default=30, ge=20, le=1000)
     strategy_process_workers: int = Field(default=2, ge=1, le=16)
     strategy_max_pending_batches: int = Field(default=1, ge=1, le=20)
+    strategy_minimum_stop_percent: Decimal = Field(default=Decimal("0.006"), ge=0, lt=1)
+    strategy_max_trade_notional_usdt: Decimal = Field(default=Decimal("0"), ge=0)
 
     signal_cooldown_minutes: int = Field(default=60, ge=0, le=1440)
     signal_maximum_active: int = Field(default=5, ge=1, le=30)

@@ -40,7 +40,9 @@ class StrategyConfig:
     maximum_display_leverage: Decimal = Decimal(20)
     liquidation_buffer_multiplier: Decimal = Decimal("1.5")
     stop_atr_buffer: Decimal = Decimal("0.10")
+    minimum_stop_percent: Decimal = Decimal("0.006")
     take_profit_1_r_multiple: Decimal = Decimal("1.5")
+    maximum_trade_notional_usdt: Decimal = Decimal(0)
     minimum_turnover_24h_usdt: Decimal = Decimal(10_000_000)
     maximum_spread_bps: Decimal = Decimal(20)
     minimum_atr_percent: Decimal = Decimal("0.001")
@@ -72,6 +74,10 @@ class StrategyConfig:
             raise ValueError("liquidation_buffer_multiplier must exceed one")
         if self.stop_atr_buffer < 0:
             raise ValueError("stop_atr_buffer cannot be negative")
+        if not Decimal(0) <= self.minimum_stop_percent < Decimal(1):
+            raise ValueError("minimum_stop_percent must be between zero and one")
+        if self.maximum_trade_notional_usdt < 0:
+            raise ValueError("maximum_trade_notional_usdt cannot be negative")
 
     @property
     def risk_amount(self) -> Decimal:

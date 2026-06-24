@@ -19,6 +19,11 @@ async def main() -> None:
     print(f"Execution denylist: {sorted(settings.execution_symbol_denylist) or 'none'}")
     print(f"TP1 close fraction: {settings.execution_tp1_close_fraction}")
     print(f"Move stop to BE after TP1: {settings.execution_move_stop_to_be_after_tp1}")
+    print(f"Strategy minimum stop: {settings.strategy_minimum_stop_percent * 100}%")
+    print(
+        "Strategy max trade notional: "
+        f"{settings.strategy_max_trade_notional_usdt or 'disabled'} USDT"
+    )
     print(f"Max open positions: {settings.execution_max_open_positions}")
     print(f"Max trades per day: {settings.execution_max_trades_per_day}")
     print(f"Max daily loss: {settings.execution_max_daily_loss_usdt} USDT")

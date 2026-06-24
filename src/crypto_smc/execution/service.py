@@ -191,6 +191,7 @@ class LiveExecutionService:
                     f"wallet cap {max_notional} USDT"
                 ),
                 now=now,
+                notify=False,
             )
             return
         leverage = _select_leverage(

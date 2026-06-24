@@ -293,6 +293,42 @@ def test_risk_plan_caps_loss_and_reduces_unsafe_20x_leverage() -> None:
     assert "leverage_reduced_for_liquidation_buffer" in warnings
 
 
+def test_trade_plan_rejects_micro_stop_distance() -> None:
+    plan, reasons = build_trade_plan(
+        direction="long",
+        entry_lower=Decimal("100"),
+        entry_upper=Decimal("101"),
+        atr=Decimal("0.1"),
+        target_price=Decimal("110"),
+        fee_rate=Decimal("0.00055"),
+        instrument_max_leverage=Decimal(100),
+        quantity_step=Decimal("0.001"),
+        minimum_notional=Decimal(5),
+        config=replace(StrategyConfig(), minimum_stop_percent=Decimal("0.01")),
+    )
+
+    assert plan is None
+    assert reasons == ("stop_distance_below_minimum",)
+
+
+def test_trade_plan_rejects_strategy_notional_cap() -> None:
+    plan, reasons = build_trade_plan(
+        direction="long",
+        entry_lower=Decimal(90),
+        entry_upper=Decimal(110),
+        atr=Decimal(10),
+        target_price=Decimal(150),
+        fee_rate=Decimal("0.00055"),
+        instrument_max_leverage=Decimal(100),
+        quantity_step=Decimal("0.001"),
+        minimum_notional=Decimal(5),
+        config=replace(StrategyConfig(), maximum_trade_notional_usdt=Decimal("10")),
+    )
+
+    assert plan is None
+    assert reasons == ("notional_above_strategy_maximum",)
+
+
 def test_trade_plan_rejects_target_on_wrong_side() -> None:
     plan, reasons = build_trade_plan(
         direction="short",

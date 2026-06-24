@@ -126,6 +126,8 @@ async def main() -> None:
             if settings.execution_enabled and settings.execution_mode == "auto"
             else None
         ),
+        minimum_stop_percent=settings.strategy_minimum_stop_percent,
+        maximum_trade_notional_usdt=settings.strategy_max_trade_notional_usdt,
     )
     strategy_analysis = StrategyAnalysisService(
         ticker_provider=provider,
@@ -249,19 +251,40 @@ async def main() -> None:
         await engine.dispose()
 
 
-def _strategy_config(profile: str, *, live_risk_usdt: Decimal | None = None) -> StrategyConfig:
+def _strategy_config(
+    profile: str,
+    *,
+    live_risk_usdt: Decimal | None = None,
+    minimum_stop_percent: Decimal = Decimal("0.006"),
+    maximum_trade_notional_usdt: Decimal = Decimal(0),
+) -> StrategyConfig:
     if profile == "aggressive_test":
         risk_amount = live_risk_usdt or StrategyConfig().risk_amount
         risk_fraction = Decimal("0.01")
         return StrategyConfig(
-            version=f"smc-v1.1.1-aggressive-test-risk-{_version_decimal(risk_amount)}",
+            version=(
+                "smc-v1.1.2-aggressive-test"
+                f"-risk-{_version_decimal(risk_amount)}"
+                f"-stop-{_version_decimal(minimum_stop_percent)}"
+                f"-notional-{_version_decimal(maximum_trade_notional_usdt)}"
+            ),
             require_15m_displacement=False,
             require_entry_zone_retest=False,
             ignore_active_evaluation_window=True,
             reference_balance=risk_amount / risk_fraction,
             risk_fraction=risk_fraction,
+            minimum_stop_percent=minimum_stop_percent,
+            maximum_trade_notional_usdt=maximum_trade_notional_usdt,
         )
-    return StrategyConfig()
+    return StrategyConfig(
+        version=(
+            "smc-v1.0.1"
+            f"-stop-{_version_decimal(minimum_stop_percent)}"
+            f"-notional-{_version_decimal(maximum_trade_notional_usdt)}"
+        ),
+        minimum_stop_percent=minimum_stop_percent,
+        maximum_trade_notional_usdt=maximum_trade_notional_usdt,
+    )
 
 
 def _version_decimal(value: Decimal) -> str:

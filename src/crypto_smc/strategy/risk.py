@@ -32,6 +32,9 @@ def build_trade_plan(
         reward_per_unit = planned_entry - target_price
     if stop_loss <= 0 or risk_per_unit <= 0:
         return None, ("invalid_stop_loss",)
+    stop_fraction = risk_per_unit / planned_entry
+    if stop_fraction < config.minimum_stop_percent:
+        return None, ("stop_distance_below_minimum",)
     if reward_per_unit <= 0:
         return None, ("no_directional_liquidity_target",)
 
@@ -49,9 +52,10 @@ def build_trade_plan(
     notional = quantity * planned_entry
     if notional < minimum_notional:
         return None, ("notional_below_exchange_minimum",)
+    if config.maximum_trade_notional_usdt > 0 and notional > config.maximum_trade_notional_usdt:
+        return None, ("notional_above_strategy_maximum",)
     gross_rr = reward_per_unit / risk_per_unit
     net_rr = net_reward_per_unit / net_risk_per_unit
-    stop_fraction = risk_per_unit / planned_entry
     safe_leverage = (Decimal(1) / (stop_fraction * config.liquidation_buffer_multiplier)).quantize(
         Decimal("0.01"), rounding=ROUND_DOWN
     )

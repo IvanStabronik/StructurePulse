@@ -65,6 +65,11 @@ class PerformanceStats:
     live_closed: int
     live_skipped: int
     live_failed: int
+    live_skipped_below_score: int
+    live_skipped_notional_cap: int
+    live_skipped_margin: int
+    live_skipped_price: int
+    live_skipped_other: int
     live_known_real_pnl: Decimal
     live_known_real_count: int
 
@@ -186,7 +191,28 @@ class TelegramQueryRepository:
                     )
                 )
             ).one()
+            skip_reason = case(
+                (LiveExecutionRecord.error.like("signal score%"), "score"),
+                (LiveExecutionRecord.error.like("notional %"), "notional"),
+                (LiveExecutionRecord.error.like("available balance%"), "margin"),
+                (LiveExecutionRecord.error.like("live entry skipped:%"), "price"),
+                (LiveExecutionRecord.error.like("symbol % is disabled%"), "symbol"),
+                else_="other",
+            ).label("skip_reason")
+            skipped_rows = (
+                await session.execute(
+                    select(skip_reason, func.count())
+                    .where(LiveExecutionRecord.status == "skipped")
+                    .group_by(skip_reason)
+                )
+            ).all()
         live_counts = {status: int(count) for status, count in live_rows}
+        skipped_counts = {reason: int(count) for reason, count in skipped_rows}
+        skipped_other = sum(
+            count
+            for reason, count in skipped_counts.items()
+            if reason not in {"score", "notional", "margin", "price"}
+        )
         return PerformanceStats(
             completed=int(row[0]),
             wins=int(row[1]),
@@ -208,6 +234,11 @@ class TelegramQueryRepository:
             live_closed=live_counts.get("closed", 0),
             live_skipped=live_counts.get("skipped", 0),
             live_failed=live_counts.get("failed", 0),
+            live_skipped_below_score=skipped_counts.get("score", 0),
+            live_skipped_notional_cap=skipped_counts.get("notional", 0),
+            live_skipped_margin=skipped_counts.get("margin", 0),
+            live_skipped_price=skipped_counts.get("price", 0),
+            live_skipped_other=skipped_other,
             live_known_real_pnl=Decimal(live_pnl_row[0]),
             live_known_real_count=int(live_pnl_row[1]),
         )
@@ -467,6 +498,7 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
             "Live всего",
             "Live отправлено",
             "Live закрыто/skip/fail",
+            "Live skip score/notional/margin/price/other",
             "Изв. real PnL",
         )
     else:
@@ -480,6 +512,7 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
             "Live total",
             "Live submitted",
             "Live closed/skip/fail",
+            "Live skip score/notional/margin/price/other",
             "Known real PnL",
         )
     return "\n".join(
@@ -493,7 +526,12 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
             f"{labels[5]}: {stats.live_total}",
             f"{labels[6]}: {stats.live_submitted}",
             (f"{labels[7]}: {stats.live_closed}/{stats.live_skipped}/{stats.live_failed}"),
-            f"{labels[8]}: {stats.live_known_real_pnl:.4f} USDT ({stats.live_known_real_count})",
+            (
+                f"{labels[8]}: {stats.live_skipped_below_score}/"
+                f"{stats.live_skipped_notional_cap}/{stats.live_skipped_margin}/"
+                f"{stats.live_skipped_price}/{stats.live_skipped_other}"
+            ),
+            f"{labels[9]}: {stats.live_known_real_pnl:.4f} USDT ({stats.live_known_real_count})",
         )
     )
 
