@@ -149,7 +149,7 @@ def strategy_input(direction: str, *, confirm_5m: bool = True) -> StrategyInput:
         ),
         analysis_5m=analysis("5m", direction, include_break=confirm_5m),
         market=StrategyMarketContext(
-            current_price=Decimal(95 if is_long else 105),
+            current_price=Decimal(91 if is_long else 109),
             volume_ratio=Decimal("1.2"),
             open_interest_change_ratio=Decimal("0.02"),
             funding_rate=Decimal(0),
@@ -201,6 +201,7 @@ def test_open_zone_must_be_retested_before_acceptance() -> None:
     modified = replace(
         source,
         analysis_15m=replace(source.analysis_15m, fair_value_gaps=(open_gap,)),
+        market=replace(source.market, current_price=Decimal("95")),
     )
 
     candidate = evaluate_candidates(modified)[0]
@@ -228,6 +229,7 @@ def test_aggressive_test_treats_15m_displacement_and_retest_as_warnings() -> Non
     modified = replace(
         source,
         analysis_15m=replace(modified_15m, fair_value_gaps=(open_gap,)),
+        market=replace(source.market, current_price=Decimal("92.1")),
     )
 
     candidate = evaluate_candidates(
@@ -236,6 +238,7 @@ def test_aggressive_test_treats_15m_displacement_and_retest_as_warnings() -> Non
             version="test-aggressive",
             require_15m_displacement=False,
             require_entry_zone_retest=False,
+            maximum_entry_chase_to_tp1=Decimal(1),
         ),
     )[0]
 
@@ -271,6 +274,34 @@ def test_crowded_funding_and_abnormal_btc_reduce_score_and_add_warnings() -> Non
 
     assert candidate.score == 95
     assert set(candidate.warnings) >= {"crowded_funding", "abnormal_btc_movement"}
+
+
+def test_candidate_is_suppressed_when_entry_is_already_chasing_tp1() -> None:
+    source = strategy_input("bullish")
+    modified = replace(
+        source,
+        market=replace(source.market, current_price=Decimal("92")),
+    )
+
+    candidate = evaluate_candidates(modified)[0]
+
+    assert candidate.score == 100
+    assert candidate.status == "suppressed"
+    assert "entry_chase_too_late" in candidate.suppression_reasons
+
+
+def test_candidate_is_suppressed_when_entry_is_too_close_to_stop() -> None:
+    source = strategy_input("bullish")
+    modified = replace(
+        source,
+        market=replace(source.market, current_price=Decimal("90")),
+    )
+
+    candidate = evaluate_candidates(modified)[0]
+
+    assert candidate.score == 100
+    assert candidate.status == "suppressed"
+    assert "entry_too_close_to_stop" in candidate.suppression_reasons
 
 
 def test_risk_plan_caps_loss_and_reduces_unsafe_20x_leverage() -> None:

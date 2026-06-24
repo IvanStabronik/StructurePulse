@@ -112,6 +112,8 @@ class Settings(BaseSettings):
     strategy_process_workers: int = Field(default=2, ge=1, le=16)
     strategy_max_pending_batches: int = Field(default=1, ge=1, le=20)
     strategy_minimum_stop_percent: Decimal = Field(default=Decimal("0.004"), ge=0, lt=1)
+    strategy_maximum_entry_chase_to_tp1: Decimal = Field(default=Decimal("0.25"), ge=0, le=1)
+    strategy_maximum_entry_adverse_to_stop: Decimal = Field(default=Decimal("0.25"), ge=0, le=1)
     strategy_max_trade_notional_usdt: Decimal = Field(default=Decimal("0"), ge=0)
 
     signal_cooldown_minutes: int = Field(default=60, ge=0, le=1440)

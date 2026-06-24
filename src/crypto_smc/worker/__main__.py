@@ -127,6 +127,8 @@ async def main() -> None:
             else None
         ),
         minimum_stop_percent=settings.strategy_minimum_stop_percent,
+        maximum_entry_chase_to_tp1=settings.strategy_maximum_entry_chase_to_tp1,
+        maximum_entry_adverse_to_stop=settings.strategy_maximum_entry_adverse_to_stop,
         maximum_trade_notional_usdt=settings.strategy_max_trade_notional_usdt,
     )
     strategy_analysis = StrategyAnalysisService(
@@ -256,6 +258,8 @@ def _strategy_config(
     *,
     live_risk_usdt: Decimal | None = None,
     minimum_stop_percent: Decimal = Decimal("0.004"),
+    maximum_entry_chase_to_tp1: Decimal = Decimal("0.25"),
+    maximum_entry_adverse_to_stop: Decimal = Decimal("0.25"),
     maximum_trade_notional_usdt: Decimal = Decimal(0),
 ) -> StrategyConfig:
     if profile == "aggressive_test":
@@ -263,10 +267,12 @@ def _strategy_config(
         risk_fraction = Decimal("0.01")
         return StrategyConfig(
             version=(
-                "smc-v1.1.2-aggressive-test"
-                f"-risk-{_version_decimal(risk_amount)}"
-                f"-stop-{_version_decimal(minimum_stop_percent)}"
-                f"-notional-{_version_decimal(maximum_trade_notional_usdt)}"
+                "smc113-aggr"
+                f"-r{_version_decimal(risk_amount)}"
+                f"-s{_version_decimal(minimum_stop_percent)}"
+                f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
+                f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
+                f"-n{_version_decimal(maximum_trade_notional_usdt)}"
             ),
             require_15m_displacement=False,
             require_entry_zone_retest=False,
@@ -274,15 +280,21 @@ def _strategy_config(
             reference_balance=risk_amount / risk_fraction,
             risk_fraction=risk_fraction,
             minimum_stop_percent=minimum_stop_percent,
+            maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
+            maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,
             maximum_trade_notional_usdt=maximum_trade_notional_usdt,
         )
     return StrategyConfig(
         version=(
-            "smc-v1.0.1"
-            f"-stop-{_version_decimal(minimum_stop_percent)}"
-            f"-notional-{_version_decimal(maximum_trade_notional_usdt)}"
+            "smc102"
+            f"-s{_version_decimal(minimum_stop_percent)}"
+            f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
+            f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
+            f"-n{_version_decimal(maximum_trade_notional_usdt)}"
         ),
         minimum_stop_percent=minimum_stop_percent,
+        maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
+        maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,
         maximum_trade_notional_usdt=maximum_trade_notional_usdt,
     )
 
