@@ -236,6 +236,24 @@ class LiveExecutionService:
                 now=now,
             )
             return
+        execution_price = await self._entry_execution_price(signal)
+        if execution_price is not None:
+            slippage_error = _entry_slippage_error(
+                signal,
+                execution_price=execution_price,
+                max_slippage_bps=self._max_slippage_bps,
+            )
+            if slippage_error is not None:
+                await self._repository.reject_entry(
+                    self._session_factory,
+                    signal=signal,
+                    risk_usdt=risk_usdt,
+                    qty=qty,
+                    leverage=leverage,
+                    error=slippage_error,
+                    now=now,
+                )
+                return
         live_id = await self._repository.claim_entry(
             self._session_factory,
             signal=signal,
@@ -251,7 +269,11 @@ class LiveExecutionService:
             return
 
         side = _entry_side(signal.direction)
-        limit_price = _entry_limit_price(signal)
+        limit_price = _entry_limit_price(
+            signal,
+            execution_price=execution_price,
+            max_slippage_bps=self._max_slippage_bps,
+        )
         submitted_order_id: str | None = None
         submitted_order_link_id = f"sp-{signal.signal_id}-entry"
         try:
@@ -659,9 +681,29 @@ def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | 
     return qty if qty > 0 else None
 
 
-def _entry_limit_price(signal: LiveSignalView) -> Decimal:
+def _entry_limit_price(
+    signal: LiveSignalView,
+    *,
+    execution_price: Decimal | None = None,
+    max_slippage_bps: Decimal = Decimal(0),
+) -> Decimal:
     if signal.price_tick_size <= 0:
         return signal.planned_entry
+    if execution_price is not None and execution_price > 0 and signal.planned_entry > 0:
+        max_slippage = signal.planned_entry * max_slippage_bps / Decimal(10_000)
+        if signal.direction == "long":
+            allowed = min(signal.entry_upper, signal.planned_entry + max_slippage)
+            rounded = _round_up(min(execution_price, allowed), signal.price_tick_size)
+            if rounded > allowed:
+                return _round_down(allowed, signal.price_tick_size)
+            return rounded
+
+        allowed = max(signal.entry_lower, signal.planned_entry - max_slippage)
+        rounded = _round_down(max(execution_price, allowed), signal.price_tick_size)
+        if rounded < allowed:
+            return _round_up(allowed, signal.price_tick_size)
+        return rounded
+
     if signal.direction == "long":
         return _round_down(signal.planned_entry, signal.price_tick_size)
     return _round_up(signal.planned_entry, signal.price_tick_size)

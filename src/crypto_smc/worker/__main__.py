@@ -257,10 +257,10 @@ def _strategy_config(
     profile: str,
     *,
     live_risk_usdt: Decimal | None = None,
-    minimum_stop_percent: Decimal = Decimal("0.004"),
-    maximum_entry_chase_to_tp1: Decimal = Decimal("0.25"),
-    maximum_entry_adverse_to_stop: Decimal = Decimal("0.25"),
-    maximum_trade_notional_usdt: Decimal = Decimal(0),
+    minimum_stop_percent: Decimal = Decimal("0.002"),
+    maximum_entry_chase_to_tp1: Decimal = Decimal("0.50"),
+    maximum_entry_adverse_to_stop: Decimal = Decimal("0.40"),
+    maximum_trade_notional_usdt: Decimal = Decimal(2000),
 ) -> StrategyConfig:
     if profile == "aggressive_test":
         risk_amount = live_risk_usdt or StrategyConfig().risk_amount

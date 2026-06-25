@@ -280,7 +280,7 @@ def test_candidate_is_suppressed_when_entry_is_already_chasing_tp1() -> None:
     source = strategy_input("bullish")
     modified = replace(
         source,
-        market=replace(source.market, current_price=Decimal("92")),
+        market=replace(source.market, current_price=Decimal("112")),
     )
 
     candidate = evaluate_candidates(modified)[0]

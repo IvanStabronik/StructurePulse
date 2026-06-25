@@ -72,20 +72,20 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_min_risk_usdt == 20
     assert settings.execution_max_open_positions == 1
     assert settings.execution_max_trades_per_day == 2
-    assert settings.execution_max_daily_loss_usdt == 10
+    assert settings.execution_max_daily_loss_usdt == 30
     assert settings.execution_poll_interval_seconds == 1
     assert settings.execution_max_effective_leverage == 45
-    assert settings.execution_min_signal_score == 85
-    assert settings.execution_max_notional_to_wallet_ratio == 5
+    assert settings.execution_min_signal_score == 80
+    assert settings.execution_max_notional_to_wallet_ratio == 6
     assert settings.execution_symbol_allowlist == frozenset()
     assert settings.execution_symbol_denylist == frozenset()
     assert settings.execution_tp1_close_fraction == Decimal("0.5")
     assert settings.execution_move_stop_to_be_after_tp1 is True
-    assert settings.execution_pending_entry_timeout_seconds == 1200
-    assert settings.strategy_minimum_stop_percent == Decimal("0.004")
-    assert settings.strategy_maximum_entry_chase_to_tp1 == Decimal("0.25")
-    assert settings.strategy_maximum_entry_adverse_to_stop == Decimal("0.25")
-    assert settings.strategy_max_trade_notional_usdt == 0
+    assert settings.execution_pending_entry_timeout_seconds == 180
+    assert settings.strategy_minimum_stop_percent == Decimal("0.002")
+    assert settings.strategy_maximum_entry_chase_to_tp1 == Decimal("0.50")
+    assert settings.strategy_maximum_entry_adverse_to_stop == Decimal("0.40")
+    assert settings.strategy_max_trade_notional_usdt == 2000
 
 
 def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:
@@ -93,10 +93,11 @@ def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:
 
     assert config.risk_amount == Decimal("50")
     assert config.reference_balance == Decimal("5000")
-    assert config.version == "smc113-aggr-r50-s0p004-c0p25-a0p25-n0"
+    assert config.version == "smc113-aggr-r50-s0p002-c0p5-a0p4-n2000"
     assert config.require_15m_displacement is False
     assert config.require_entry_zone_retest is False
     assert config.ignore_active_evaluation_window is True
-    assert config.minimum_stop_percent == Decimal("0.004")
-    assert config.maximum_entry_chase_to_tp1 == Decimal("0.25")
-    assert config.maximum_entry_adverse_to_stop == Decimal("0.25")
+    assert config.minimum_stop_percent == Decimal("0.002")
+    assert config.maximum_entry_chase_to_tp1 == Decimal("0.50")
+    assert config.maximum_entry_adverse_to_stop == Decimal("0.40")
+    assert config.maximum_trade_notional_usdt == Decimal("2000")
