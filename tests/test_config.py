@@ -51,7 +51,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.signal_maximum_per_hour == 10
     assert settings.signal_burst_window_minutes == 5
     assert settings.signal_burst_maximum == 3
-    assert settings.signal_pause_on_abnormal_btc is True
+    assert settings.signal_pause_on_abnormal_btc is False
     assert settings.signal_trade_recent_limit == 1000
     assert settings.telegram_default_language == "ru"
     assert settings.telegram_schedule_timezone == "Europe/Warsaw"
@@ -82,6 +82,7 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_tp1_close_fraction == Decimal("0.5")
     assert settings.execution_move_stop_to_be_after_tp1 is True
     assert settings.execution_pending_entry_timeout_seconds == 180
+    assert settings.strategy_minimum_net_reward_to_risk == Decimal("1.5")
     assert settings.strategy_minimum_stop_percent == Decimal("0.002")
     assert settings.strategy_maximum_entry_chase_to_tp1 == Decimal("0.50")
     assert settings.strategy_maximum_entry_adverse_to_stop == Decimal("0.40")
@@ -93,10 +94,11 @@ def test_aggressive_profile_aligns_paper_risk_with_live_risk() -> None:
 
     assert config.risk_amount == Decimal("50")
     assert config.reference_balance == Decimal("5000")
-    assert config.version == "smc113-aggr-r50-s0p002-c0p5-a0p4-n2000"
+    assert config.version == "smc113-aggr-r50-s0p002-c0p5-a0p4-n2000-rr1p5"
     assert config.require_15m_displacement is False
     assert config.require_entry_zone_retest is False
     assert config.ignore_active_evaluation_window is True
+    assert config.minimum_net_reward_to_risk == Decimal("1.5")
     assert config.minimum_stop_percent == Decimal("0.002")
     assert config.maximum_entry_chase_to_tp1 == Decimal("0.50")
     assert config.maximum_entry_adverse_to_stop == Decimal("0.40")

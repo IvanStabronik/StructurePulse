@@ -33,7 +33,7 @@ class StrategyConfig:
     ignore_active_evaluation_window: bool = False
     minimum_score: int = 70
     strong_score: int = 85
-    minimum_net_reward_to_risk: Decimal = Decimal(3)
+    minimum_net_reward_to_risk: Decimal = Decimal("1.5")
     signal_lifetime_minutes: int = 90
     reference_balance: Decimal = Decimal(10_000)
     risk_fraction: Decimal = Decimal("0.01")

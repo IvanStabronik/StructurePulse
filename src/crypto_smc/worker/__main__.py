@@ -126,6 +126,7 @@ async def main() -> None:
             if settings.execution_enabled and settings.execution_mode == "auto"
             else None
         ),
+        minimum_net_reward_to_risk=settings.strategy_minimum_net_reward_to_risk,
         minimum_stop_percent=settings.strategy_minimum_stop_percent,
         maximum_entry_chase_to_tp1=settings.strategy_maximum_entry_chase_to_tp1,
         maximum_entry_adverse_to_stop=settings.strategy_maximum_entry_adverse_to_stop,
@@ -257,6 +258,7 @@ def _strategy_config(
     profile: str,
     *,
     live_risk_usdt: Decimal | None = None,
+    minimum_net_reward_to_risk: Decimal = Decimal("1.5"),
     minimum_stop_percent: Decimal = Decimal("0.002"),
     maximum_entry_chase_to_tp1: Decimal = Decimal("0.50"),
     maximum_entry_adverse_to_stop: Decimal = Decimal("0.40"),
@@ -273,12 +275,14 @@ def _strategy_config(
                 f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
                 f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
                 f"-n{_version_decimal(maximum_trade_notional_usdt)}"
+                f"-rr{_version_decimal(minimum_net_reward_to_risk)}"
             ),
             require_15m_displacement=False,
             require_entry_zone_retest=False,
             ignore_active_evaluation_window=True,
             reference_balance=risk_amount / risk_fraction,
             risk_fraction=risk_fraction,
+            minimum_net_reward_to_risk=minimum_net_reward_to_risk,
             minimum_stop_percent=minimum_stop_percent,
             maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
             maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,
@@ -291,7 +295,9 @@ def _strategy_config(
             f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
             f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
             f"-n{_version_decimal(maximum_trade_notional_usdt)}"
+            f"-rr{_version_decimal(minimum_net_reward_to_risk)}"
         ),
+        minimum_net_reward_to_risk=minimum_net_reward_to_risk,
         minimum_stop_percent=minimum_stop_percent,
         maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
         maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,

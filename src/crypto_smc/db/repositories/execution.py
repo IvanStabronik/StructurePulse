@@ -52,6 +52,8 @@ class LiveSignalView:
     current_stop: Decimal
     take_profit_1: Decimal
     take_profit_2: Decimal
+    risk_amount: Decimal
+    planned_quantity: Decimal
     virtual_remaining_quantity: Decimal
     price_tick_size: Decimal
     quantity_step: Decimal
@@ -142,6 +144,8 @@ class LiveExecutionRepository:
             current_stop=trade.current_stop,
             take_profit_1=signal.take_profit_1,
             take_profit_2=signal.take_profit_2,
+            risk_amount=signal.risk_amount,
+            planned_quantity=signal.quantity,
             virtual_remaining_quantity=trade.remaining_quantity,
             price_tick_size=instrument.tick_size,
             quantity_step=instrument.quantity_step,

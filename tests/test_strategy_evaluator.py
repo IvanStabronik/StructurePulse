@@ -324,8 +324,8 @@ def test_risk_plan_caps_loss_and_reduces_unsafe_20x_leverage() -> None:
     assert "leverage_reduced_for_liquidation_buffer" in warnings
 
 
-def test_trade_plan_rejects_micro_stop_distance() -> None:
-    plan, reasons = build_trade_plan(
+def test_trade_plan_widens_micro_stop_distance() -> None:
+    plan, warnings = build_trade_plan(
         direction="long",
         entry_lower=Decimal("100"),
         entry_upper=Decimal("101"),
@@ -338,12 +338,14 @@ def test_trade_plan_rejects_micro_stop_distance() -> None:
         config=replace(StrategyConfig(), minimum_stop_percent=Decimal("0.01")),
     )
 
-    assert plan is None
-    assert reasons == ("stop_distance_below_minimum",)
+    assert plan is not None
+    assert plan.stop_loss == Decimal("99.495")
+    assert plan.estimated_loss_at_stop <= Decimal(100)
+    assert "stop_widened_to_minimum_distance" in warnings
 
 
-def test_trade_plan_rejects_strategy_notional_cap() -> None:
-    plan, reasons = build_trade_plan(
+def test_trade_plan_reduces_risk_to_strategy_notional_cap() -> None:
+    plan, warnings = build_trade_plan(
         direction="long",
         entry_lower=Decimal(90),
         entry_upper=Decimal(110),
@@ -353,11 +355,13 @@ def test_trade_plan_rejects_strategy_notional_cap() -> None:
         instrument_max_leverage=Decimal(100),
         quantity_step=Decimal("0.001"),
         minimum_notional=Decimal(5),
-        config=replace(StrategyConfig(), maximum_trade_notional_usdt=Decimal("10")),
+        config=replace(StrategyConfig(), maximum_trade_notional_usdt=Decimal("300")),
     )
 
-    assert plan is None
-    assert reasons == ("notional_above_strategy_maximum",)
+    assert plan is not None
+    assert plan.notional <= Decimal("300")
+    assert plan.risk_amount < StrategyConfig().risk_amount
+    assert "risk_reduced_for_notional_cap" in warnings
 
 
 def test_trade_plan_rejects_target_on_wrong_side() -> None:

@@ -150,32 +150,39 @@ class LiveExecutionService:
             )
             return
         balance = await self._client.get_wallet_balance(coin="USDT")
-        risk_usdt = _risk_for_available_margin(
-            signal,
-            target_risk_usdt=self._risk_usdt,
-            min_risk_usdt=self._min_risk_usdt,
-            available_balance=balance.total_available_balance,
-            max_effective_leverage=self._max_effective_leverage,
-        )
-        if risk_usdt is None:
-            await self._repository.reject_entry(
-                self._session_factory,
-                signal=signal,
-                risk_usdt=self._risk_usdt,
-                qty=Decimal(0),
-                leverage=_effective_max_leverage(signal, self._max_effective_leverage),
-                error=(
-                    f"available balance {balance.total_available_balance} cannot support "
-                    f"minimum live risk {self._min_risk_usdt} USDT for this setup "
-                    f"within {_effective_max_leverage(signal, self._max_effective_leverage)}x "
-                    "max effective leverage"
-                ),
-                now=now,
+        strategy_qty = _quantity_from_strategy_plan(signal)
+        if strategy_qty is not None:
+            qty = strategy_qty
+            risk_usdt = min(self._risk_usdt, signal.risk_amount)
+        else:
+            margin_risk_usdt = _risk_for_available_margin(
+                signal,
+                target_risk_usdt=self._risk_usdt,
+                min_risk_usdt=self._min_risk_usdt,
+                available_balance=balance.total_available_balance,
+                max_effective_leverage=self._max_effective_leverage,
             )
-            return
-        qty = _quantity_for_risk(signal, risk_usdt)
-        if qty is None:
-            return
+            if margin_risk_usdt is None:
+                await self._repository.reject_entry(
+                    self._session_factory,
+                    signal=signal,
+                    risk_usdt=self._risk_usdt,
+                    qty=Decimal(0),
+                    leverage=_effective_max_leverage(signal, self._max_effective_leverage),
+                    error=(
+                        f"available balance {balance.total_available_balance} cannot support "
+                        f"minimum live risk {self._min_risk_usdt} USDT for this setup "
+                        f"within {_effective_max_leverage(signal, self._max_effective_leverage)}x "
+                        "max effective leverage"
+                    ),
+                    now=now,
+                )
+                return
+            risk_usdt = margin_risk_usdt
+            risk_qty = _quantity_for_risk(signal, risk_usdt)
+            if risk_qty is None:
+                return
+            qty = risk_qty
         notional = qty * signal.planned_entry
         wallet_balance = max(balance.total_wallet_balance, balance.total_available_balance)
         max_notional = wallet_balance * self._max_notional_to_wallet_ratio
@@ -672,6 +679,19 @@ def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | 
     if risk_per_unit <= 0:
         return None
     qty = _round_down(risk_usdt / risk_per_unit, signal.quantity_step)
+    if qty < signal.min_order_quantity:
+        return None
+    if qty * signal.planned_entry < signal.min_notional_value:
+        return None
+    if qty > signal.max_market_order_quantity:
+        qty = _round_down(signal.max_market_order_quantity, signal.quantity_step)
+    return qty if qty > 0 else None
+
+
+def _quantity_from_strategy_plan(signal: LiveSignalView) -> Decimal | None:
+    if signal.planned_quantity <= 0 or signal.quantity_step <= 0:
+        return None
+    qty = _round_down(signal.planned_quantity, signal.quantity_step)
     if qty < signal.min_order_quantity:
         return None
     if qty * signal.planned_entry < signal.min_notional_value:

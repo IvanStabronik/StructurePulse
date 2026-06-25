@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     strategy_minimum_history_candles: int = Field(default=30, ge=20, le=1000)
     strategy_process_workers: int = Field(default=2, ge=1, le=16)
     strategy_max_pending_batches: int = Field(default=1, ge=1, le=20)
+    strategy_minimum_net_reward_to_risk: Decimal = Field(default=Decimal("1.5"), gt=0, le=10)
     strategy_minimum_stop_percent: Decimal = Field(default=Decimal("0.002"), ge=0, lt=1)
     strategy_maximum_entry_chase_to_tp1: Decimal = Field(default=Decimal("0.50"), ge=0, le=1)
     strategy_maximum_entry_adverse_to_stop: Decimal = Field(default=Decimal("0.40"), ge=0, le=1)
@@ -121,7 +122,7 @@ class Settings(BaseSettings):
     signal_maximum_per_hour: int = Field(default=10, ge=1, le=100)
     signal_burst_window_minutes: int = Field(default=5, ge=1, le=60)
     signal_burst_maximum: int = Field(default=3, ge=1, le=30)
-    signal_pause_on_abnormal_btc: bool = True
+    signal_pause_on_abnormal_btc: bool = False
     signal_trade_queue_size: int = Field(default=20_000, ge=100, le=200_000)
     signal_trade_buffer_size: int = Field(default=5000, ge=1000, le=100_000)
     signal_trade_recent_limit: int = Field(default=1000, ge=1, le=1000)
