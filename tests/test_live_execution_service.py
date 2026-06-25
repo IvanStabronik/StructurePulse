@@ -38,6 +38,7 @@ def signal_view(
     live_entry_order_id: str | None = None,
     live_entry_order_link_id: str | None = None,
     live_entry_submitted_at: datetime | None = None,
+    live_created_at: datetime | None = None,
 ) -> LiveSignalView:
     return LiveSignalView(
         signal_id=1,
@@ -67,6 +68,7 @@ def signal_view(
         live_entry_order_id=live_entry_order_id,
         live_entry_order_link_id=live_entry_order_link_id,
         live_entry_submitted_at=live_entry_submitted_at,
+        live_created_at=live_created_at,
     )
 
 
@@ -204,10 +206,14 @@ class FakeCloseRepository:
         self.closed_order_id: str | None = None
         self.real_pnl: Decimal | None = None
         self.close_claims = 0
+        self.synced_qty: Decimal | None = None
 
     async def claim_close(self, *_: object, **__: object) -> Decimal:
         self.close_claims += 1
         return Decimal("0.35")
+
+    async def mark_position_quantity(self, *_: object, **kwargs: object) -> None:
+        self.synced_qty = kwargs["qty"]  # type: ignore[assignment]
 
     async def mark_closed(self, *_: object, **kwargs: object) -> None:
         self.closed = True
@@ -219,9 +225,16 @@ class FakeCloseRepository:
 
 
 class FakeCloseClient:
-    def __init__(self, *, position_size: Decimal, close_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        position_size: Decimal,
+        close_error: Exception | None = None,
+        closed_pnl_items: tuple[Any, ...] | None = None,
+    ) -> None:
         self.position_size = position_size
         self.close_error = close_error
+        self.closed_pnl_items = closed_pnl_items
         self.close_orders = 0
         self.last_order_qty = Decimal(0)
 
@@ -243,6 +256,8 @@ class FakeCloseClient:
         return type("Order", (), {"order_id": "close-order"})()
 
     async def get_closed_pnl(self, **_: object) -> tuple[Any, ...]:
+        if self.closed_pnl_items is not None:
+            return self.closed_pnl_items
         return (
             type(
                 "ClosedPnl",
@@ -252,6 +267,7 @@ class FakeCloseClient:
                     "closed_pnl": Decimal("4.2"),
                     "average_entry_price": Decimal("14.14"),
                     "average_exit_price": Decimal("14.09"),
+                    "updated_time_ms": 1782405942598,
                 },
             )(),
         )
@@ -275,6 +291,7 @@ class FakeEntryRepository:
         self.tp1_claims = 0
         self.tp1_order_id: str | None = None
         self.tp1_remaining_qty: Decimal | None = None
+        self.synced_qty: Decimal | None = None
 
     async def claim_entry(self, *_: object, **__: object) -> int:
         self.claims += 1
@@ -298,6 +315,9 @@ class FakeEntryRepository:
 
     async def mark_entry_open(self, *_: object, **kwargs: object) -> None:
         self.opened_qty = kwargs["qty"]  # type: ignore[assignment]
+
+    async def mark_position_quantity(self, *_: object, **kwargs: object) -> None:
+        self.synced_qty = kwargs["qty"]  # type: ignore[assignment]
 
     async def mark_closed(self, *_: object, **kwargs: object) -> None:
         self.closed_order_id = str(kwargs["order_id"])
@@ -390,6 +410,7 @@ class FakeEntryClient:
                     "closed_pnl": Decimal("-0.7"),
                     "average_entry_price": Decimal("0.6931"),
                     "average_exit_price": Decimal("0.6929"),
+                    "updated_time_ms": 1782405942598,
                 },
             )(),
         )
@@ -716,6 +737,39 @@ async def test_pending_limit_marks_open_when_bybit_position_appears() -> None:
     assert client.cancellations == 0
 
 
+async def test_open_position_quantity_is_resynced_from_bybit_after_partial_fill() -> None:
+    repository = FakeEntryRepository()
+    client = FakeEntryClient(
+        available_balance=Decimal("239.18205325"),
+        position_size=Decimal("1340.3"),
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("10"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=10,
+        max_daily_loss_usdt=Decimal("30"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._handle(
+        signal_view(
+            symbol="DOTUSDT",
+            signal_status="entered",
+            live_id=7,
+            live_status="open",
+            live_remaining_qty=Decimal("20.2"),
+        )
+    )
+
+    assert repository.synced_qty == Decimal("1340.3")
+    assert repository.tp1_claims == 0
+    assert repository.closed_order_id is None
+
+
 async def test_pending_limit_emergency_closes_when_stop_is_rejected() -> None:
     repository = FakeEntryRepository()
     client = FakeEntryClient(
@@ -1000,6 +1054,78 @@ async def test_close_includes_real_pnl_for_submitted_close_order() -> None:
     assert repository.closed is True
     assert repository.closed_order_id == "close-order"
     assert repository.real_pnl == Decimal("4.2")
+    assert client.close_orders == 1
+
+
+async def test_close_after_tp1_sums_all_closed_pnl_since_live_entry() -> None:
+    repository = FakeCloseRepository()
+    live_created_at = datetime.fromtimestamp(1782405000, tz=UTC)
+    closed_pnl_items = (
+        type(
+            "ClosedPnl",
+            (),
+            {
+                "order_id": "older-order",
+                "closed_pnl": Decimal("99"),
+                "average_entry_price": Decimal("0.9"),
+                "average_exit_price": Decimal("0.8"),
+                "updated_time_ms": 1782400000000,
+            },
+        )(),
+        type(
+            "ClosedPnl",
+            (),
+            {
+                "order_id": "tp1-order",
+                "closed_pnl": Decimal("5.77"),
+                "average_entry_price": Decimal("0.8572"),
+                "average_exit_price": Decimal("0.8474"),
+                "updated_time_ms": 1782405265518,
+            },
+        )(),
+        type(
+            "ClosedPnl",
+            (),
+            {
+                "order_id": "close-order",
+                "closed_pnl": Decimal("9.82"),
+                "average_entry_price": Decimal("0.8572"),
+                "average_exit_price": Decimal("0.8413"),
+                "updated_time_ms": 1782405942598,
+            },
+        )(),
+    )
+    client = FakeCloseClient(
+        position_size=Decimal("0.35"),
+        closed_pnl_items=closed_pnl_items,
+    )
+    service = LiveExecutionService(
+        client=client,  # type: ignore[arg-type]
+        session_factory=None,  # type: ignore[arg-type]
+        risk_usdt=Decimal("50"),
+        leverage=Decimal("20"),
+        max_open_positions=1,
+        max_trades_per_day=2,
+        max_daily_loss_usdt=Decimal("10"),
+        poll_interval_seconds=1,
+        repository=repository,  # type: ignore[arg-type]
+    )
+
+    await service._close(
+        signal_view(
+            symbol="DOTUSDT",
+            direction="short",
+            signal_status="tp2_completed",
+            live_id=1,
+            live_status="tp1_reduced",
+            live_remaining_qty=Decimal("0.35"),
+            live_created_at=live_created_at,
+        )
+    )
+
+    assert repository.closed is True
+    assert repository.closed_order_id == "close-order"
+    assert repository.real_pnl == Decimal("15.59")
     assert client.close_orders == 1
 
 

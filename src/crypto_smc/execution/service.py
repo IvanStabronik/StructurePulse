@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -113,6 +113,8 @@ class LiveExecutionService:
                 return
             await self._sync_pending_entry(signal)
             return
+        if signal.live_status in {"open", "tp1_reduced"}:
+            await self._sync_open_position_quantity(signal)
         if signal.live_status == "open" and signal.signal_status == "tp1_reached":
             await self._take_profit_1(signal)
             return
@@ -362,7 +364,11 @@ class LiveExecutionService:
                 )
                 return
             if await self._live_position_size(signal.symbol) <= 0:
-                real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+                real_pnl = await self._closed_pnl(
+                    signal.symbol,
+                    order_id="",
+                    since=signal.live_created_at,
+                )
                 await self._repository.mark_closed(
                     self._session_factory,
                     live_id=resolved_live_id,
@@ -390,6 +396,23 @@ class LiveExecutionService:
             order_id=order_id or signal.live_entry_order_id or "",
             qty=actual_qty,
             stop_loss=signal.stop_loss,
+            now=datetime.now(UTC),
+        )
+
+    async def _sync_open_position_quantity(self, signal: LiveSignalView) -> None:
+        if signal.live_id is None:
+            return
+        if signal.live_status != "open":
+            return
+        if signal.live_remaining_qty == signal.planned_quantity:
+            return
+        actual_qty = await self._live_position_size(signal.symbol)
+        if actual_qty <= 0 or actual_qty == signal.live_remaining_qty:
+            return
+        await self._repository.mark_position_quantity(
+            self._session_factory,
+            live_id=signal.live_id,
+            qty=actual_qty,
             now=datetime.now(UTC),
         )
 
@@ -471,7 +494,11 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         actual_qty = await self._live_position_size(signal.symbol)
         if actual_qty <= 0:
-            real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+            real_pnl = await self._closed_pnl(
+                signal.symbol,
+                order_id="",
+                since=signal.live_created_at,
+            )
             await self._repository.mark_closed(
                 self._session_factory,
                 live_id=signal.live_id,
@@ -511,7 +538,8 @@ class LiveExecutionService:
                 if close_result is not None:
                     real_pnl = await self._closed_pnl(
                         signal.symbol,
-                        order_id=close_result.order_id,
+                        order_id="",
+                        since=signal.live_created_at,
                     )
                     await self._repository.mark_closed(
                         self._session_factory,
@@ -557,7 +585,11 @@ class LiveExecutionService:
         close_side = _close_side(signal.direction)
         actual_qty = await self._live_position_size(signal.symbol)
         if actual_qty <= 0:
-            real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+            real_pnl = await self._closed_pnl(
+                signal.symbol,
+                order_id="",
+                since=signal.live_created_at,
+            )
             await self._repository.mark_closed(
                 self._session_factory,
                 live_id=signal.live_id,
@@ -578,7 +610,11 @@ class LiveExecutionService:
             )
         except Exception as exc:
             if _is_already_flat_error(exc) or await self._live_position_size(signal.symbol) <= 0:
-                real_pnl = await self._closed_pnl(signal.symbol, order_id="")
+                real_pnl = await self._closed_pnl(
+                    signal.symbol,
+                    order_id="",
+                    since=signal.live_created_at,
+                )
                 await self._repository.mark_closed(
                     self._session_factory,
                     live_id=signal.live_id,
@@ -596,7 +632,11 @@ class LiveExecutionService:
                 now=datetime.now(UTC),
             )
             return
-        real_pnl = await self._closed_pnl(signal.symbol, order_id=result.order_id)
+        real_pnl = await self._closed_pnl(
+            signal.symbol,
+            order_id="",
+            since=signal.live_created_at,
+        )
         await self._repository.mark_closed(
             self._session_factory,
             live_id=signal.live_id,
@@ -626,21 +666,31 @@ class LiveExecutionService:
         symbol: str,
         *,
         order_id: str,
+        since: datetime | None = None,
     ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
-        try:
-            closed_items = await self._client.get_closed_pnl(symbol=symbol, limit=10)
-        except Exception:
-            await logger.aexception("live_execution_closed_pnl_fetch_failed", symbol=symbol)
-            return None, None, None
+        closed_items: tuple[Any, ...] = ()
+        for attempt in range(5):
+            try:
+                closed_items = await self._client.get_closed_pnl(symbol=symbol, limit=10)
+            except Exception:
+                await logger.aexception("live_execution_closed_pnl_fetch_failed", symbol=symbol)
+                return None, None, None
+            closed_items = _filter_closed_pnl(
+                closed_items,
+                order_id=order_id,
+                since=since,
+            )
+            if closed_items:
+                break
+            if attempt < 4:
+                await asyncio.sleep(0.5)
         if not closed_items:
             return None, None, None
-        if order_id:
-            closed_items = tuple(item for item in closed_items if item.order_id == order_id)
-            if not closed_items:
-                return None, None, None
+        closed_items = tuple(sorted(closed_items, key=lambda item: int(item.updated_time_ms)))
         real_pnl = sum((item.closed_pnl for item in closed_items), Decimal(0))
         first = closed_items[0]
-        return real_pnl, first.average_entry_price, first.average_exit_price
+        last = closed_items[-1]
+        return real_pnl, first.average_entry_price, last.average_exit_price
 
     async def _emergency_close(
         self,
@@ -670,6 +720,20 @@ class LiveExecutionService:
         if signal.direction == "long":
             return ticker.ask_price if ticker.ask_price > 0 else ticker.last_price
         return ticker.bid_price if ticker.bid_price > 0 else ticker.last_price
+
+
+def _filter_closed_pnl(
+    closed_items: tuple[Any, ...],
+    *,
+    order_id: str,
+    since: datetime | None,
+) -> tuple[Any, ...]:
+    if order_id:
+        return tuple(item for item in closed_items if item.order_id == order_id)
+    if since is not None:
+        since_ms = int(since.timestamp() * 1000) - 60_000
+        closed_items = tuple(item for item in closed_items if int(item.updated_time_ms) >= since_ms)
+    return closed_items
 
 
 def _quantity_for_risk(signal: LiveSignalView, risk_usdt: Decimal) -> Decimal | None:
