@@ -110,8 +110,10 @@ def _evaluate_direction(
             ),
         )
     )
-    if not has_displacement:
+    if not has_displacement and config.require_15m_displacement:
         suppression.append("missing_15m_structure_displacement")
+    elif not has_displacement:
+        warnings.append("missing_15m_structure_displacement")
 
     zone = _latest_entry_zone(strategy_input.analysis_15m, smc_direction)
     zone_score = 0
@@ -128,10 +130,16 @@ def _evaluate_direction(
     )
     if zone is None:
         suppression.append("missing_entry_zone")
+    elif (
+        zone[3] != "partially_filled"
+        and not (zone[1] <= strategy_input.market.current_price <= zone[2])
+        and config.require_entry_zone_retest
+    ):
+        suppression.append("entry_zone_not_retested")
     elif zone[3] != "partially_filled" and not (
         zone[1] <= strategy_input.market.current_price <= zone[2]
     ):
-        suppression.append("entry_zone_not_retested")
+        warnings.append("entry_zone_not_retested")
 
     location_matches = (
         strategy_input.analysis_4h.price_location == desired_location
@@ -235,6 +243,16 @@ def _evaluate_direction(
                 suppression.append("reward_to_risk_below_minimum")
             else:
                 warnings.extend(plan_details)
+                suppression.extend(
+                    _entry_timing_reasons(
+                        direction,
+                        strategy_input.market.current_price,
+                        trade_plan.planned_entry,
+                        trade_plan.stop_loss,
+                        trade_plan.take_profit_1,
+                        config,
+                    )
+                )
 
     score = sum(component.awarded for component in components)
     if score < config.minimum_score:
@@ -344,6 +362,43 @@ def _btc_is_abnormal(strategy_input: StrategyInput, config: StrategyConfig) -> b
             and market.btc_true_range_atr_ratio >= config.btc_true_range_warning_ratio
         )
     )
+
+
+def _entry_timing_reasons(
+    direction: TradeDirection,
+    current_price: Decimal,
+    planned_entry: Decimal,
+    stop_loss: Decimal,
+    take_profit_1: Decimal,
+    config: StrategyConfig,
+) -> tuple[str, ...]:
+    if current_price <= 0 or planned_entry <= 0:
+        return ()
+    if direction == "long":
+        favorable_move = current_price - planned_entry
+        adverse_move = planned_entry - current_price
+        tp1_distance = take_profit_1 - planned_entry
+        stop_distance = planned_entry - stop_loss
+    else:
+        favorable_move = planned_entry - current_price
+        adverse_move = current_price - planned_entry
+        tp1_distance = planned_entry - take_profit_1
+        stop_distance = stop_loss - planned_entry
+
+    reasons: list[str] = []
+    if (
+        favorable_move > 0
+        and tp1_distance > 0
+        and favorable_move / tp1_distance > config.maximum_entry_chase_to_tp1
+    ):
+        reasons.append("entry_chase_too_late")
+    if (
+        adverse_move > 0
+        and stop_distance > 0
+        and adverse_move / stop_distance > config.maximum_entry_adverse_to_stop
+    ):
+        reasons.append("entry_too_close_to_stop")
+    return tuple(reasons)
 
 
 def _append_market_filter_reasons(

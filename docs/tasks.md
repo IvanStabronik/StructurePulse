@@ -1,12 +1,13 @@
-# Crypto SMC Signal Bot - Implementation Plan v1.1
+# StructurePulse - Implementation Plan v1.2
 
 ## 1. Delivery strategy
 
 Development is split into vertical milestones. Each milestone must leave the
 system runnable and testable. Market-data correctness and signal auditability
-come before Telegram presentation or strategy optimization.
+come before Telegram presentation, live execution, or strategy optimization.
 
-No real order execution is included.
+The original MVP was signal-only. The current implementation also contains an
+explicitly gated experimental Bybit live-execution extension.
 
 ## 2. Definition of Done
 
@@ -289,7 +290,7 @@ Tasks:
 - `M7-07` Implement `/signals`, `/coin`, `/settings`, and `/status`.
 - `M7-08` Implement `/language`, `/threshold`, `/schedule`, and `/risk`.
 - `M7-09` Implement `/pause`, `/resume`, and `/stats`.
-- `M7-10` Enforce the Europe/Warsaw 07:00-20:00 notification schedule.
+- `M7-10` Enforce the configured Europe/Warsaw notification schedule.
 - `M7-11` Continue lifecycle tracking outside notification hours.
 
 Acceptance:
@@ -336,6 +337,14 @@ Acceptance:
 Goal: compare trustworthy live virtual results with offline replay behavior and
 evaluate the strategy.
 
+Status: in progress since 2026-06-15. Evaluation windows now freeze a strategy
+version and produce reproducible live reports grouped by symbol, direction,
+score band, and UTC trading session. Reports include costs, ambiguity,
+drawdown, suppressions, data-quality defects, and conservative readiness
+criteria. Equivalent live and replay reports can now be compared using an
+immutable strategy checksum. Continuous observation and the 100-signal
+threshold remain ongoing.
+
 Tasks:
 
 - `M9-01` Run the system continuously with the 30-asset universe.
@@ -351,10 +360,55 @@ Acceptance:
 
 - Performance includes fees, estimated funding, and ambiguous-case reporting.
 - Results can be reproduced from persisted inputs and strategy configuration.
-- No automatic execution decision is made solely from positive total profit.
+- Virtual reports explicitly state that they do not represent realized account
+  PnL.
 - Replay results shorten the feedback loop but do not replace the requirement
-  for at least 100 completed live virtual signals before automatic execution is
-  considered.
+  for enough completed live virtual signals before increasing live risk.
+
+### M10 - Experimental Bybit live execution
+
+Goal: place tightly controlled real Bybit USDT perpetual orders from accepted
+signals while preserving the virtual lifecycle as an independent model.
+
+Status: experimental and active locally. Live execution is disabled by default
+and must be enabled with `.env` feature flags and Bybit API credentials.
+
+Tasks:
+
+- `M10-01` Add Bybit private REST authentication and account checks.
+- `M10-02` Add `live_executions` persistence for one live attempt per signal.
+- `M10-03` Support `disabled` and `auto` execution modes.
+- `M10-04` Size positions from fixed USDT risk, stop distance, instrument
+  precision, max effective leverage, and available balance.
+- `M10-05` Downsize or skip safely when the requested risk does not fit the
+  account constraints.
+- `M10-06` Enforce max open positions, max trades per day, daily loss guard,
+  and configured slippage guard.
+- `M10-07` Verify current bid/ask is still inside the planned entry tolerance
+  immediately before sending a market order.
+- `M10-08` Set exchange leverage before entry.
+- `M10-09` Submit market entry and detect the resulting real position size.
+- `M10-10` Set Stop Loss after entry and fail loudly if protection cannot be
+  confirmed.
+- `M10-11` Use reduce-only closes for TP1, Stop Loss, and terminal exits.
+- `M10-12` Fetch Bybit closed PnL for live-close Telegram messages.
+- `M10-13` Keep virtual lifecycle messages separate from live execution
+  messages.
+
+Acceptance:
+
+- Live execution never runs unless explicitly enabled.
+- A skipped live entry does not send an order.
+- A failed live attempt does not stop virtual tracking.
+- Telegram distinguishes virtual events from live account events.
+- Bybit closed PnL is shown when available and treated as the real result.
+
+Remaining work:
+
+- Manual approval mode before live order submission.
+- Persistent live-vs-virtual performance reports.
+- Private WebSocket reconciliation for faster position and order updates.
+- More detailed daily realized-PnL accounting across symbols.
 
 ## 4. Recommended execution order
 
@@ -369,6 +423,7 @@ M0
  -> M7
  -> M8
  -> M9
+ -> M10
 ```
 
 Some work may overlap:
@@ -386,7 +441,8 @@ Join:                 M3 + M4 -> M5 -> M6
 ```
 
 The critical path is `M0 -> M1 -> M2 -> M3 -> M5 -> M6`, with M4 completed in
-parallel before M5 integration.
+parallel before M5 integration. M10 is an operational extension after the
+signal lifecycle and Telegram outbox are stable.
 
 ## 5. First implementation slice
 

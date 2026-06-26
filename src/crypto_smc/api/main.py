@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 import structlog
 from fastapi import FastAPI, HTTPException, Query, Response, status
@@ -26,6 +26,7 @@ from crypto_smc.db.session import (
     database_schema_is_ready,
 )
 from crypto_smc.observability.logging import configure_logging
+from crypto_smc.observation import ObservationRepository
 from crypto_smc.providers.bybit import BybitClient
 from crypto_smc.providers.protocols import InstrumentProvider
 from crypto_smc.strategy.serialization import json_safe
@@ -40,6 +41,7 @@ def create_app(
     engine: AsyncEngine | None = None,
     strategy_repository: StrategyRepository | None = None,
     signal_repository: SignalRepository | None = None,
+    observation_repository: ObservationRepository | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
@@ -55,6 +57,7 @@ def create_app(
     aggregation_repository = AggregationRepository()
     candidate_repository = strategy_repository or StrategyRepository()
     lifecycle_repository = signal_repository or SignalRepository()
+    live_observation_repository = observation_repository or ObservationRepository()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -164,6 +167,30 @@ def create_app(
     @app.get("/aggregation/status", tags=["market-data"])
     async def aggregation_status() -> dict[str, object]:
         return await aggregation_repository.status_summary(session_factory)
+
+    @app.get("/observation/current", tags=["observation"])
+    async def current_observation() -> dict[str, object]:
+        window = await live_observation_repository.current_window(session_factory)
+        if window is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="evaluation_window_not_started",
+            )
+        return cast(dict[str, object], json_safe(asdict(window)))
+
+    @app.get("/observation/report", tags=["observation"])
+    async def observation_report(name: str | None = None) -> dict[str, object]:
+        try:
+            report = await live_observation_repository.report(
+                session_factory,
+                window_name=name,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+        return cast(dict[str, object], json_safe(asdict(report)))
 
     if app_settings.debug_api_enabled:
 

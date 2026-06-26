@@ -33,7 +33,7 @@ def settings(*, language: str = "ru", paused: bool = False) -> TelegramUserSetti
     return TelegramUserSettings(
         user_id=42,
         language=language,
-        minimum_score=70,
+        minimum_score=85,
         schedule_timezone="Europe/Warsaw",
         schedule_start=time(7),
         schedule_end=time(20),
@@ -98,6 +98,11 @@ def test_warsaw_schedule_and_delivery_filters_are_deterministic() -> None:
         "below_score_threshold",
     )
     outbox.event_type = "signal_result"
+    assert delivery_policy(outbox, user, now=NOW) == (
+        "skipped",
+        "below_score_threshold",
+    )
+    outbox.payload = {"status": "ready"}
     assert delivery_policy(outbox, user, now=NOW) == ("pending", None)
 
 
@@ -108,8 +113,108 @@ def test_notifications_render_in_russian_and_english() -> None:
 
     assert "НОВЫЙ СИГНАЛ" in russian
     assert "ЛОНГ" in russian
+    assert "Вирт. риск: 100 USDT" in russian
     assert "NEW SIGNAL" in english
     assert "LONG" in english
+    assert "Virtual risk: 100 USDT" in english
+
+
+def test_breakeven_result_mentions_tp1_before_be() -> None:
+    payload = delivery().payload | {
+        "status": "stopped_at_breakeven",
+        "realized_pnl": "28.9275",
+        "r_multiple": "0.2893",
+        "fees": "36.887",
+        "estimated_funding": "-0.082",
+    }
+
+    russian = render_notification("signal_result", payload, "ru")
+    english = render_notification("signal_result", payload, "en")
+
+    assert "TP1 + BE" in russian
+    assert "TP1 + BE" in english
+    assert "Virtual PnL: 28.9275 USDT" in russian
+    assert "Virtual PnL: 28.9275 USDT" in english
+    assert "stopped_at_breakeven" not in english
+
+
+def test_live_submitting_notification_omits_unknown_remaining_quantity() -> None:
+    payload = delivery().payload | {
+        "status": "entry_submitting",
+        "qty": "0.69",
+        "risk_usdt": "50",
+        "notional_usdt": "8980.5",
+        "estimated_margin_usdt": "449.025",
+        "stop_loss": "72.4335",
+    }
+
+    message = render_notification("live_entry_submitting", payload, "ru")
+
+    assert "Qty: 0.69" in message
+    assert "Remaining:" not in message
+    assert "Risk: 50 USDT" in message
+    assert "Notional: 8980.5 USDT" in message
+    assert "Est. margin: 449.025 USDT" in message
+
+
+def test_live_pending_notification_mentions_limit_order() -> None:
+    payload = delivery().payload | {
+        "status": "entry_pending",
+        "qty": "23.07",
+        "remaining_qty": "23.07",
+        "risk_usdt": "15.2",
+        "leverage": "50",
+        "notional_usdt": "10504.8092",
+        "estimated_margin_usdt": "210.0962",
+        "stop_loss": "456.0038",
+    }
+
+    message = render_notification("live_entry_pending", payload, "ru")
+
+    assert "LIVE: LIMIT ORDER PLACED" in message
+    assert "LIVE: POSITION OPEN" not in message
+    assert "Status: entry_pending" in message
+    assert "Remaining: 23.07" in message
+
+
+def test_live_skipped_notification_is_not_rendered_as_failed_execution() -> None:
+    payload = delivery().payload | {
+        "status": "skipped",
+        "qty": "23027",
+        "risk_usdt": "20",
+        "leverage": "50",
+        "notional_usdt": "4790.6327",
+        "estimated_margin_usdt": "95.8127",
+        "stop_loss": "0.2072",
+        "error": "live entry skipped: ask 0.20883 is above allowed 0.20848113",
+    }
+
+    message = render_notification("live_entry_skipped", payload, "ru")
+
+    assert "LIVE: VIRTUAL ONLY" in message
+    assert "LIVE: EXECUTION FAILED" not in message
+    assert "Status: skipped" in message
+    assert "live entry skipped" in message
+
+
+def test_live_closed_notification_renders_real_pnl() -> None:
+    payload = delivery().payload | {
+        "status": "closed",
+        "qty": "288",
+        "remaining_qty": "0",
+        "risk_usdt": "20",
+        "notional_usdt": "4051.44",
+        "stop_loss": "14.1367",
+        "real_pnl_usdt": "4.2020167",
+        "real_entry_price": "14.14053819",
+        "real_exit_price": "14.09488889",
+    }
+
+    message = render_notification("live_position_closed", payload, "ru")
+
+    assert "Real PnL: 4.202 USDT" in message
+    assert "Real entry: 14.1405" in message
+    assert "Real exit: 14.0949" in message
 
 
 class FakeOutboxRepository:
@@ -255,10 +360,33 @@ class FakeQueries:
         )
 
     async def stats(self, _: object) -> PerformanceStats:
-        return PerformanceStats(10, 6, 1, Decimal("250.5"), Decimal("0.4"))
+        return PerformanceStats(
+            completed=10,
+            wins=6,
+            ambiguous=1,
+            pnl=Decimal("250.5"),
+            average_r=Decimal("0.4"),
+            live_total=8,
+            live_submitted=4,
+            live_closed=2,
+            live_skipped=3,
+            live_failed=1,
+            live_skipped_below_score=1,
+            live_skipped_notional_cap=1,
+            live_skipped_margin=0,
+            live_skipped_price=1,
+            live_skipped_other=0,
+            live_known_real_pnl=Decimal("12.34"),
+            live_known_real_count=2,
+        )
 
     async def status(self, _: object) -> ServiceStatus:
         return ServiceStatus(30, 0, 1, 0, 0)
+
+
+class DegradedQueries(FakeQueries):
+    async def status(self, _: object) -> ServiceStatus:
+        return ServiceStatus(30, 2, 1, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -275,6 +403,7 @@ async def test_commands_support_localization_and_settings_updates() -> None:
     changed = await service.handle(42, "/language en")
     schedule = await service.handle(42, "/schedule 08:00 19:30 Europe/Warsaw")
     risk = await service.handle(42, "/risk 1.5 12000")
+    stats = await service.handle(42, "/stats")
     paused = await service.handle(42, "/pause")
 
     assert "Активный сигнал" in signals
@@ -282,9 +411,27 @@ async def test_commands_support_localization_and_settings_updates() -> None:
     assert "Language: en" in changed
     assert "08:00-19:30" in schedule
     assert "1.5%" in risk
+    assert "Live" in stats
+    assert "1/1/0/1/0" in stats
+    assert "12.3400 USDT" in stats
     assert paused == "Notifications paused."
     assert settings_repository.current is not None
     assert settings_repository.current.paused is True
+
+
+@pytest.mark.asyncio
+async def test_status_renders_ready_and_degraded_separately() -> None:
+    service = TelegramCommandService(
+        session_factory=object(),  # type: ignore[arg-type]
+        settings_repository=FakeSettingsRepository(settings(language="en")),  # type: ignore[arg-type]
+        query_repository=DegradedQueries(),  # type: ignore[arg-type]
+    )
+
+    response = await service.handle(42, "/status")
+
+    assert "Market ready: 30" in response
+    assert "Market degraded: 2" in response
+    assert "30/2" not in response
 
 
 @pytest.mark.asyncio

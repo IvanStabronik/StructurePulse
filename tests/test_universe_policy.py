@@ -87,10 +87,11 @@ def policy(*, size: int = 30, denylist: frozenset[str] = frozenset()) -> Univers
 def test_policy_excludes_asset_categories_before_exchange_filters() -> None:
     assets = [
         asset("USDT", 1, provider_id="tether", name="Tether"),
-        asset("WBTC", 2, provider_id="wrapped-bitcoin", name="Wrapped Bitcoin"),
-        asset("TSLA", 3, name="Tesla Tokenized Stock"),
-        asset("BTC3L", 4),
-        asset("BLOCK", 5),
+        asset("USD1", 2, provider_id="world-liberty-financial-usd", name="USD1"),
+        asset("WBTC", 3, provider_id="wrapped-bitcoin", name="Wrapped Bitcoin"),
+        asset("TSLA", 4, name="Tesla Tokenized Stock"),
+        asset("BTC3L", 5),
+        asset("BLOCK", 6),
     ]
 
     decisions = policy(denylist=frozenset({"BLOCK"})).evaluate(
@@ -101,6 +102,7 @@ def test_policy_excludes_asset_categories_before_exchange_filters() -> None:
     )
 
     assert [decision.exclusion_reason for decision in decisions] == [
+        ExclusionReason.STABLECOIN,
         ExclusionReason.STABLECOIN,
         ExclusionReason.WRAPPED_ASSET,
         ExclusionReason.TOKENIZED_STOCK,

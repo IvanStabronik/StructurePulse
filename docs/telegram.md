@@ -9,8 +9,8 @@ TELEGRAM_BOT_TOKEN=replace-with-bot-token
 TELEGRAM_ALLOWED_USER_IDS=123456789
 TELEGRAM_DEFAULT_LANGUAGE=ru
 TELEGRAM_SCHEDULE_TIMEZONE=Europe/Warsaw
-TELEGRAM_SCHEDULE_START=07:00:00
-TELEGRAM_SCHEDULE_END=20:00:00
+TELEGRAM_SCHEDULE_START=00:00:00
+TELEGRAM_SCHEDULE_END=00:00:00
 ```
 
 Multiple allowed user IDs are comma-separated. Unknown users receive no
@@ -19,6 +19,10 @@ market data or command response.
 If the token is empty, the Telegram container remains idle and logs that
 delivery is disabled. This lets the rest of the local stack run before bot
 credentials are configured.
+
+The current local live-test setup often uses `00:00-00:00 Europe/Warsaw` as a
+24-hour notification window. This affects message delivery only. It does not
+stop market-data ingestion or strategy analysis.
 
 ## Commands
 
@@ -42,3 +46,73 @@ blindly, which avoids duplicate logical messages.
 The schedule applies only to new entry signals. Market tracking continues at
 all times, and entry, target, stop, expiration, ambiguity, and service
 warnings can still be delivered outside the new-signal window.
+
+## Settings versus live execution
+
+`/settings` shows per-user Telegram and virtual-reference values:
+
+- language;
+- minimum score;
+- notification schedule;
+- virtual risk percent;
+- reference balance;
+- pause state.
+
+It does not show or change live execution values from `.env`.
+
+Live execution uses:
+
+```dotenv
+EXECUTION_RISK_USDT
+EXECUTION_MIN_RISK_USDT
+EXECUTION_MAX_EFFECTIVE_LEVERAGE
+EXECUTION_MAX_OPEN_POSITIONS
+EXECUTION_MAX_TRADES_PER_DAY
+EXECUTION_MAX_DAILY_LOSS_USDT
+EXECUTION_MAX_SLIPPAGE_BPS
+EXECUTION_PENDING_ENTRY_TIMEOUT_SECONDS
+```
+
+The small-account live profile caps effective leverage at `45x` to avoid
+Bybit risk-tier rejection at `50x` on some high-notional setups.
+It also cancels stale pending entry orders after 20 minutes in the local live
+test profile, so one unfilled limit order does not block every later setup.
+
+Use this command to inspect live execution settings:
+
+```powershell
+docker compose run --rm worker python -m crypto_smc.execution.check_bybit_account
+```
+
+## Message types
+
+Virtual messages:
+
+- `НОВЫЙ СИГНАЛ` / `NEW SIGNAL`: accepted setup and virtual risk.
+- `ВИРТУАЛЬНЫЙ ВХОД` / `VIRTUAL ENTRY`: virtual lifecycle touched entry.
+- `ВИРТУАЛЬНЫЙ TP1` / `VIRTUAL TP1`: virtual TP1 was reached.
+- `ВИРТУАЛЬНЫЙ РЕЗУЛЬТАТ` / `VIRTUAL RESULT`: virtual terminal result.
+
+Live messages:
+
+- `LIVE: SUBMITTING ORDER`: worker is preparing a real order.
+- `LIVE: LIMIT ORDER PLACED`: Bybit accepted a real GTC limit entry order; the
+  position is not open until Bybit reports non-zero size.
+- `LIVE: POSITION OPEN`: Bybit entry order was accepted and position size was
+  detected.
+- `LIVE: TP1 HALF CLOSED`: reduce-only TP1 close was submitted.
+- `LIVE: POSITION CLOSED`: live position is closed.
+- `LIVE: EXECUTION FAILED`: a submitted live execution step failed and may need
+  operator review.
+- `LIVE: VIRTUAL ONLY`: the setup remains tracked virtually, but the bot did
+  not submit a Bybit order because the pre-live guard rejected it.
+
+When Bybit closed PnL is available, `LIVE: POSITION CLOSED` includes:
+
+- `Real PnL`;
+- `Real entry`;
+- `Real exit`.
+
+If `LIVE: VIRTUAL ONLY` contains `live entry skipped`, no Bybit order was sent.
+If it contains `pending entry cancelled`, the real limit entry was cancelled
+because the virtual signal finished before Bybit filled the order.

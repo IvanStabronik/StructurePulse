@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from crypto_smc.db.models import (
     AggregatedCandleRecord,
     AnalysisSnapshotRecord,
+    EvaluationWindowRecord,
     InstrumentRecord,
     SignalCandidateRecord,
     StrategyVersionRecord,
@@ -20,7 +21,7 @@ from crypto_smc.db.models import (
 from crypto_smc.db.repositories.signals import SignalRepository
 from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.strategy import SignalCandidate, StrategyConfig, StrategyInput
-from crypto_smc.strategy.serialization import json_safe
+from crypto_smc.strategy.serialization import json_safe, parameter_checksum
 from smc_core import Candle, Timeframe
 
 
@@ -267,13 +268,24 @@ class StrategyRepository:
         config: StrategyConfig,
     ) -> StrategyVersionRecord:
         parameters = config.parameter_snapshot()
-        checksum = hashlib.sha256(
-            json.dumps(
-                parameters,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        checksum = parameter_checksum(parameters)
+        frozen_version = await session.scalar(
+            select(StrategyVersionRecord.version)
+            .join(
+                EvaluationWindowRecord,
+                EvaluationWindowRecord.strategy_version_id == StrategyVersionRecord.id,
+            )
+            .where(EvaluationWindowRecord.status == "active")
+        )
+        if (
+            frozen_version is not None
+            and frozen_version != config.version
+            and not config.ignore_active_evaluation_window
+        ):
+            raise ValueError(
+                f"Strategy version is frozen at {frozen_version} by the active evaluation window"
+            )
+
         existing = await session.scalar(
             select(StrategyVersionRecord).where(StrategyVersionRecord.version == config.version)
         )
@@ -282,6 +294,13 @@ class StrategyRepository:
                 raise ValueError(
                     f"Strategy version {config.version} already has different parameters"
                 )
+            if not existing.is_active:
+                await session.execute(
+                    update(StrategyVersionRecord)
+                    .where(StrategyVersionRecord.is_active.is_(True))
+                    .values(is_active=False)
+                )
+                existing.is_active = True
             return existing
 
         await session.execute(

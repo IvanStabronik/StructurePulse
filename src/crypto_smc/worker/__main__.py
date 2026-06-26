@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 
 from crypto_smc.aggregation.reconciliation import AggregationReconciliationService
 from crypto_smc.aggregation.service import AggregationService
@@ -6,6 +7,7 @@ from crypto_smc.analysis import AnalysisProcessPool, StrategyAnalysisService
 from crypto_smc.config import get_settings
 from crypto_smc.db.repositories.strategy import StrategyRepository
 from crypto_smc.db.session import create_engine, create_session_factory
+from crypto_smc.execution.service import LiveExecutionService
 from crypto_smc.market_data import LiveMarketDataService, MarketDataBackfillService
 from crypto_smc.observability.logging import configure_logging
 from crypto_smc.observability.runtime import EventLoopMonitor, WorkerRuntimeState
@@ -13,6 +15,7 @@ from crypto_smc.observability.worker_health import WorkerHealthServer
 from crypto_smc.providers.bybit import (
     BybitClient,
     BybitKlineWebSocketManager,
+    BybitPrivateClient,
     BybitPublicTradeWebSocketManager,
 )
 from crypto_smc.providers.coingecko import CoinGeckoClient
@@ -22,6 +25,7 @@ from crypto_smc.services.operational_warnings import OperationalWarningService
 from crypto_smc.services.universe_refresh import UniverseRefreshService
 from crypto_smc.signals import SignalPolicyConfig
 from crypto_smc.signals.service import SignalLifecycleService
+from crypto_smc.strategy import StrategyConfig
 from crypto_smc.universe import UniversePolicyConfig
 
 
@@ -115,6 +119,19 @@ async def main() -> None:
         max_workers=settings.strategy_process_workers,
         max_pending_batches=settings.strategy_max_pending_batches,
     )
+    strategy_config = _strategy_config(
+        settings.strategy_profile,
+        live_risk_usdt=(
+            settings.execution_risk_usdt
+            if settings.execution_enabled and settings.execution_mode == "auto"
+            else None
+        ),
+        minimum_net_reward_to_risk=settings.strategy_minimum_net_reward_to_risk,
+        minimum_stop_percent=settings.strategy_minimum_stop_percent,
+        maximum_entry_chase_to_tp1=settings.strategy_maximum_entry_chase_to_tp1,
+        maximum_entry_adverse_to_stop=settings.strategy_maximum_entry_adverse_to_stop,
+        maximum_trade_notional_usdt=settings.strategy_max_trade_notional_usdt,
+    )
     strategy_analysis = StrategyAnalysisService(
         ticker_provider=provider,
         session_factory=session_factory,
@@ -123,6 +140,7 @@ async def main() -> None:
         history_candles=settings.strategy_history_candles,
         minimum_history_candles=settings.strategy_minimum_history_candles,
         readiness_event=market_data_ready,
+        config=strategy_config,
         repository=StrategyRepository(
             signal_policy=SignalPolicyConfig(
                 cooldown_minutes=settings.signal_cooldown_minutes,
@@ -143,6 +161,42 @@ async def main() -> None:
         reconnect_max_seconds=settings.bybit_ws_reconnect_max_seconds,
         ready_timeout_seconds=settings.bybit_ws_ready_timeout_seconds,
     )
+    execution_client: BybitPrivateClient | None = None
+    live_execution: LiveExecutionService | None = None
+    if settings.execution_enabled and settings.execution_mode == "auto":
+        if not settings.bybit_api_key or not settings.bybit_api_secret:
+            raise RuntimeError("Live execution is enabled but Bybit API credentials are missing")
+        execution_client = BybitPrivateClient(
+            base_url=settings.bybit_base_url,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            timeout_seconds=settings.bybit_request_timeout_seconds,
+            recv_window_ms=settings.bybit_recv_window_ms,
+            max_requests_per_second=settings.bybit_max_requests_per_second,
+            max_concurrency=settings.bybit_max_concurrency,
+        )
+        live_execution = LiveExecutionService(
+            client=execution_client,
+            session_factory=session_factory,
+            risk_usdt=settings.execution_risk_usdt,
+            leverage=settings.execution_leverage,
+            min_risk_usdt=settings.execution_min_risk_usdt,
+            max_effective_leverage=settings.execution_max_effective_leverage,
+            max_slippage_bps=settings.execution_max_slippage_bps,
+            min_signal_score=settings.execution_min_signal_score,
+            max_notional_to_wallet_ratio=settings.execution_max_notional_to_wallet_ratio,
+            symbol_allowlist=settings.execution_symbol_allowlist,
+            symbol_denylist=settings.execution_symbol_denylist,
+            tp1_close_fraction=settings.execution_tp1_close_fraction,
+            move_stop_to_be_after_tp1=settings.execution_move_stop_to_be_after_tp1,
+            max_open_positions=settings.execution_max_open_positions,
+            max_trades_per_day=settings.execution_max_trades_per_day,
+            max_daily_loss_usdt=settings.execution_max_daily_loss_usdt,
+            loss_cooldown_minutes=settings.execution_loss_cooldown_minutes,
+            pending_entry_timeout_seconds=settings.execution_pending_entry_timeout_seconds,
+            poll_interval_seconds=settings.execution_poll_interval_seconds,
+            ticker_provider=provider,
+        )
     signal_lifecycle = SignalLifecycleService(
         provider=provider,
         stream=public_trade_stream,
@@ -150,6 +204,7 @@ async def main() -> None:
         poll_interval_seconds=settings.signal_trade_poll_interval_seconds,
         recent_trade_limit=settings.signal_trade_recent_limit,
         checkpoint_interval_seconds=(settings.signal_trade_checkpoint_interval_seconds),
+        live_execution=live_execution,
     )
     maintenance = MaintenanceService(
         session_factory=session_factory,
@@ -167,7 +222,7 @@ async def main() -> None:
     )
 
     async def run_worker() -> None:
-        await asyncio.gather(
+        tasks = [
             live_market_data.run(),
             aggregation_service.run(),
             aggregation_reconciliation.run(),
@@ -176,7 +231,10 @@ async def main() -> None:
             event_loop_monitor.run(),
             maintenance.run(),
             operational_warnings.run(),
-        )
+        ]
+        if live_execution is not None:
+            tasks.append(live_execution.run())
+        await asyncio.gather(*tasks)
 
     await health_server.start()
     try:
@@ -191,8 +249,65 @@ async def main() -> None:
         await health_server.close()
         await analysis_process_pool.close()
         await provider.close()
+        if execution_client is not None:
+            await execution_client.close()
         await ranking_provider.close()
         await engine.dispose()
+
+
+def _strategy_config(
+    profile: str,
+    *,
+    live_risk_usdt: Decimal | None = None,
+    minimum_net_reward_to_risk: Decimal = Decimal("1.5"),
+    minimum_stop_percent: Decimal = Decimal("0.002"),
+    maximum_entry_chase_to_tp1: Decimal = Decimal("0.50"),
+    maximum_entry_adverse_to_stop: Decimal = Decimal("0.40"),
+    maximum_trade_notional_usdt: Decimal = Decimal(2000),
+) -> StrategyConfig:
+    if profile == "aggressive_test":
+        risk_amount = live_risk_usdt or StrategyConfig().risk_amount
+        risk_fraction = Decimal("0.01")
+        return StrategyConfig(
+            version=(
+                "smc113-aggr"
+                f"-r{_version_decimal(risk_amount)}"
+                f"-s{_version_decimal(minimum_stop_percent)}"
+                f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
+                f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
+                f"-n{_version_decimal(maximum_trade_notional_usdt)}"
+                f"-rr{_version_decimal(minimum_net_reward_to_risk)}"
+            ),
+            require_15m_displacement=False,
+            require_entry_zone_retest=False,
+            ignore_active_evaluation_window=True,
+            reference_balance=risk_amount / risk_fraction,
+            risk_fraction=risk_fraction,
+            minimum_net_reward_to_risk=minimum_net_reward_to_risk,
+            minimum_stop_percent=minimum_stop_percent,
+            maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
+            maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,
+            maximum_trade_notional_usdt=maximum_trade_notional_usdt,
+        )
+    return StrategyConfig(
+        version=(
+            "smc102"
+            f"-s{_version_decimal(minimum_stop_percent)}"
+            f"-c{_version_decimal(maximum_entry_chase_to_tp1)}"
+            f"-a{_version_decimal(maximum_entry_adverse_to_stop)}"
+            f"-n{_version_decimal(maximum_trade_notional_usdt)}"
+            f"-rr{_version_decimal(minimum_net_reward_to_risk)}"
+        ),
+        minimum_net_reward_to_risk=minimum_net_reward_to_risk,
+        minimum_stop_percent=minimum_stop_percent,
+        maximum_entry_chase_to_tp1=maximum_entry_chase_to_tp1,
+        maximum_entry_adverse_to_stop=maximum_entry_adverse_to_stop,
+        maximum_trade_notional_usdt=maximum_trade_notional_usdt,
+    )
+
+
+def _version_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f").replace(".", "p")
 
 
 if __name__ == "__main__":

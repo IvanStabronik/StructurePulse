@@ -340,12 +340,21 @@ class FakeFallbackRepository:
         return self.candles
 
 
+class FakeLiveExecution:
+    def __init__(self) -> None:
+        self.signal_ids: list[int] = []
+
+    async def handle_signal_id(self, signal_id: int) -> None:
+        self.signal_ids.append(signal_id)
+
+
 @pytest.mark.asyncio
 async def test_service_activates_only_after_overlap_and_replays_handshake_trade() -> None:
     old = trade("old", "102", milliseconds=-1000)
     shared = trade("shared", "100")
     repository = FakeRepository(tracking_signal())
     stream = FakeStream((shared,))
+    live_execution = FakeLiveExecution()
     service = SignalLifecycleService(
         provider=FakeProvider((old, shared)),
         stream=stream,  # type: ignore[arg-type]
@@ -354,6 +363,7 @@ async def test_service_activates_only_after_overlap_and_replays_handshake_trade(
         recent_trade_limit=1000,
         checkpoint_interval_seconds=1,
         repository=repository,  # type: ignore[arg-type]
+        live_execution=live_execution,
     )
 
     task = asyncio.create_task(service.run())
@@ -366,6 +376,7 @@ async def test_service_activates_only_after_overlap_and_replays_handshake_trade(
         await task
 
     assert repository.transitions == ["active", "entered"]
+    assert live_execution.signal_ids == [1]
     assert repository.checkpoints == ["shared"]
     assert stream.stopped is True
 

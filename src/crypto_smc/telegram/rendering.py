@@ -31,9 +31,9 @@ def render_notification(
     if event_type == "new_signal":
         title = "НОВЫЙ СИГНАЛ" if language == "ru" else "NEW SIGNAL"
         labels = (
-            ("Оценка", "Вход", "Стоп", "Риск")
+            ("Оценка", "Вход", "Стоп", "Вирт. риск")
             if language == "ru"
-            else ("Score", "Entry", "Stop", "Risk")
+            else ("Score", "Entry", "Stop", "Virtual risk")
         )
         return "\n".join(
             (
@@ -50,13 +50,60 @@ def render_notification(
             )
         )
     if event_type == "entry_filled":
-        title = "ВХОД АКТИВИРОВАН" if language == "ru" else "ENTRY FILLED"
+        title = "ВИРТУАЛЬНЫЙ ВХОД" if language == "ru" else "VIRTUAL ENTRY"
         entry = "Вход" if language == "ru" else "Entry"
         return f"{title}: {symbol} {direction}\n{entry}: {_number(payload.get('planned_entry'))}"
+    if event_type in {
+        "live_entry_submitting",
+        "live_entry_pending",
+        "live_entry_open",
+        "live_tp1_reduced",
+        "live_position_closed",
+        "live_execution_failed",
+        "live_entry_skipped",
+    }:
+        titles = {
+            "live_entry_submitting": "LIVE: SUBMITTING ORDER",
+            "live_entry_pending": "LIVE: LIMIT ORDER PLACED",
+            "live_entry_open": "LIVE: POSITION OPEN",
+            "live_tp1_reduced": "LIVE: TP1 HALF CLOSED",
+            "live_position_closed": "LIVE: POSITION CLOSED",
+            "live_execution_failed": "LIVE: EXECUTION FAILED",
+            "live_entry_skipped": "LIVE: VIRTUAL ONLY",
+        }
+        lines = [
+            f"{titles[event_type]}: {symbol} {direction}",
+            f"Status: {payload.get('status', '?')}",
+            f"Qty: {_number(payload.get('qty'))}",
+            f"Stop: {_number(payload.get('stop_loss'))}",
+        ]
+        if payload.get("remaining_qty") is not None:
+            lines.insert(3, f"Remaining: {_number(payload.get('remaining_qty'))}")
+        if payload.get("risk_usdt") is not None:
+            lines.insert(-1, f"Risk: {_number(payload.get('risk_usdt'))} USDT")
+        if payload.get("leverage") is not None:
+            lines.insert(-1, f"Leverage: {_number(payload.get('leverage'))}x")
+        if payload.get("notional_usdt") is not None:
+            lines.insert(-1, f"Notional: {_number(payload.get('notional_usdt'))} USDT")
+        if payload.get("estimated_margin_usdt") is not None:
+            lines.insert(-1, f"Est. margin: {_number(payload.get('estimated_margin_usdt'))} USDT")
+        if payload.get("real_pnl_usdt") is not None:
+            lines.append(f"Real PnL: {_number(payload.get('real_pnl_usdt'))} USDT")
+        if payload.get("real_entry_price") is not None:
+            lines.append(f"Real entry: {_number(payload.get('real_entry_price'))}")
+        if payload.get("real_exit_price") is not None:
+            lines.append(f"Real exit: {_number(payload.get('real_exit_price'))}")
+        if payload.get("error"):
+            lines.append(f"Error: {payload.get('error')}")
+        return "\n".join(lines)
     if event_type == "take_profit_1":
-        title = "TP1 ДОСТИГНУТ" if language == "ru" else "TP1 REACHED"
+        title = "ВИРТУАЛЬНЫЙ TP1" if language == "ru" else "VIRTUAL TP1"
         stop = "Стоп" if language == "ru" else "Stop"
-        return f"{title}: {symbol}\n{stop}: BE\nPnL: {_number(payload.get('realized_pnl'))} USDT"
+        return (
+            f"{title}: {symbol}\n"
+            f"{stop}: BE\n"
+            f"Virtual PnL: {_number(payload.get('realized_pnl'))} USDT"
+        )
     if event_type == "signal_warning":
         title = "ПРЕДУПРЕЖДЕНИЕ" if language == "ru" else "WARNING"
         status_label = "Статус" if language == "ru" else "Status"
@@ -65,7 +112,7 @@ def render_notification(
         title = "СИГНАЛ ЗАКРЫТ" if language == "ru" else "SIGNAL CLOSED"
         status_label = "Статус" if language == "ru" else "Status"
         return f"{title}: {symbol}\n{status_label}: {status}"
-    title = "РЕЗУЛЬТАТ" if language == "ru" else "RESULT"
+    title = "ВИРТУАЛЬНЫЙ РЕЗУЛЬТАТ" if language == "ru" else "VIRTUAL RESULT"
     result_labels = (
         ("Статус", "Комиссии", "Фандинг") if language == "ru" else ("Status", "Fees", "Funding")
     )
@@ -73,7 +120,7 @@ def render_notification(
         (
             f"{title}: {symbol} {direction}",
             f"{result_labels[0]}: {status}",
-            f"PnL: {_number(payload.get('realized_pnl'))} USDT",
+            f"Virtual PnL: {_number(payload.get('realized_pnl'))} USDT",
             f"R: {_number(payload.get('r_multiple'))}",
             f"{result_labels[1]}: {_number(payload.get('fees'))} USDT",
             f"{result_labels[2]}: {_number(payload.get('estimated_funding'))} USDT",
@@ -124,13 +171,15 @@ def _direction(direction: str, language: str) -> str:
 
 def _status(status: str, language: str) -> str:
     if language != "ru":
-        return status
+        return {
+            "stopped_at_breakeven": "TP1 + BE",
+        }.get(status, status)
     return {
         "active": "активен",
         "entered": "в позиции",
         "tp1_reached": "TP1",
         "stopped": "стоп",
-        "stopped_at_breakeven": "безубыток",
+        "stopped_at_breakeven": "TP1 + BE",
         "tp2_completed": "TP2",
         "ambiguous": "неоднозначно",
         "coverage_failed": "нет надёжного покрытия",

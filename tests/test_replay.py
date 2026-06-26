@@ -318,6 +318,8 @@ def test_reports_are_reproducible(tmp_path: Path) -> None:
 
     for name in ("report.json", "candidates.csv", "outcomes.csv"):
         assert (first / name).read_bytes() == (second / name).read_bytes()
+    report_payload = json.loads((first / "report.json").read_text(encoding="utf-8"))
+    assert len(report_payload["strategy_parameter_checksum"]) == 64
 
 
 def test_summary_counts_ambiguous_losses_conservatively() -> None:

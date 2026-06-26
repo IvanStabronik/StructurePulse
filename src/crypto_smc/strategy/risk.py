@@ -32,6 +32,15 @@ def build_trade_plan(
         reward_per_unit = planned_entry - target_price
     if stop_loss <= 0 or risk_per_unit <= 0:
         return None, ("invalid_stop_loss",)
+    warnings: list[str] = []
+    stop_fraction = risk_per_unit / planned_entry
+    if stop_fraction < config.minimum_stop_percent:
+        risk_per_unit = planned_entry * config.minimum_stop_percent
+        stop_loss = (
+            planned_entry - risk_per_unit if direction == "long" else planned_entry + risk_per_unit
+        )
+        stop_fraction = risk_per_unit / planned_entry
+        warnings.append("stop_widened_to_minimum_distance")
     if reward_per_unit <= 0:
         return None, ("no_directional_liquidity_target",)
 
@@ -46,12 +55,20 @@ def build_trade_plan(
     quantity = (raw_quantity / quantity_step).to_integral_value(rounding=ROUND_DOWN) * quantity_step
     if quantity <= 0:
         return None, ("quantity_below_exchange_minimum",)
+    if config.maximum_trade_notional_usdt > 0:
+        max_quantity = (
+            (config.maximum_trade_notional_usdt / planned_entry) / quantity_step
+        ).to_integral_value(rounding=ROUND_DOWN) * quantity_step
+        if max_quantity <= 0:
+            return None, ("notional_below_exchange_minimum",)
+        if quantity > max_quantity:
+            quantity = max_quantity
+            warnings.append("risk_reduced_for_notional_cap")
     notional = quantity * planned_entry
     if notional < minimum_notional:
         return None, ("notional_below_exchange_minimum",)
     gross_rr = reward_per_unit / risk_per_unit
     net_rr = net_reward_per_unit / net_risk_per_unit
-    stop_fraction = risk_per_unit / planned_entry
     safe_leverage = (Decimal(1) / (stop_fraction * config.liquidation_buffer_multiplier)).quantize(
         Decimal("0.01"), rounding=ROUND_DOWN
     )
@@ -68,9 +85,9 @@ def build_trade_plan(
     take_profit_1 = (
         planned_entry + tp1_distance if direction == "long" else planned_entry - tp1_distance
     )
-    warnings: list[str] = []
     if recommended_leverage < config.maximum_display_leverage:
         warnings.append("leverage_reduced_for_liquidation_buffer")
+    estimated_loss_at_stop = quantity * net_risk_per_unit
 
     plan = TradePlan(
         entry_lower=entry_lower,
@@ -81,14 +98,14 @@ def build_trade_plan(
         take_profit_2=target_price,
         gross_reward_to_risk=gross_rr,
         net_reward_to_risk=net_rr,
-        risk_amount=config.risk_amount,
+        risk_amount=min(config.risk_amount, estimated_loss_at_stop),
         quantity=quantity,
         notional=notional,
         recommended_leverage=recommended_leverage,
         estimated_margin=estimated_margin,
         estimated_entry_fee=quantity * entry_fee_per_unit,
         estimated_exit_fee=quantity * exit_fee_per_unit,
-        estimated_loss_at_stop=quantity * net_risk_per_unit,
+        estimated_loss_at_stop=estimated_loss_at_stop,
         invalidation=(
             f"close below {stop_loss}" if direction == "long" else f"close above {stop_loss}"
         ),

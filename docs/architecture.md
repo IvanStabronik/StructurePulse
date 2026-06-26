@@ -1,283 +1,219 @@
-# Crypto SMC Signal Bot - Architecture v1.1
+# StructurePulse - Architecture v1.2
 
-## 1. Architectural approach
+## 1. Overview
 
-The MVP is a modular monolith written in Python 3.12 and deployed with Docker
-Compose. It uses one codebase and one PostgreSQL database, but separates
-market-data ingestion, strategy analysis, signal lifecycle, and Telegram
-delivery into explicit modules.
+StructurePulse is a modular Python 3.12 monolith deployed with Docker Compose.
+It continuously ingests Bybit market data, builds deterministic SMC analysis,
+publishes Telegram signals, tracks every signal virtually, and can optionally
+execute live Bybit futures orders.
 
-This approach keeps local deployment and debugging simple while preserving
-boundaries that allow high-load components or real order execution to be
-extracted later.
+The system is intentionally split into clear runtime roles:
 
-## 2. Technology stack
+- `api`: HTTP health, metrics, debug, observation, and read-only status routes.
+- `worker`: universe refresh, market data, aggregation, strategy analysis,
+  signal lifecycle, live execution, operational monitoring, and maintenance.
+- `telegram`: Telegram commands and outbox delivery.
+- `postgres`: system of record.
 
-- Runtime: Python 3.12.
-- Async I/O: asyncio.
-- Numerical calculations: NumPy where vectorization provides a measurable
-  benefit.
-- HTTP/admin API: FastAPI.
-- Validation and settings: Pydantic.
-- Database access: SQLAlchemy 2 async with asyncpg.
-- Database migrations: Alembic.
-- Telegram: aiogram.
-- Bybit REST: typed adapter over HTTPX.
-- Bybit WebSocket: typed adapter over websockets.
-- Scheduling: APScheduler with PostgreSQL-backed application state.
-- Logging: structlog JSON logs.
-- Metrics: Prometheus client.
-- Tests: pytest, pytest-asyncio, and testcontainers where integration coverage
-  is required.
-- Packaging and tooling: uv, Ruff, and mypy.
-- Deployment: Docker Compose with PostgreSQL 16.
+All roles use the same application image and one PostgreSQL database.
 
-Exchange and ranking-provider clients are internal adapters. No strategy or
-domain module may depend directly on an external SDK response shape.
+## 2. Technology Stack
 
-## 3. Runtime topology
+- Python 3.12.
+- FastAPI for HTTP API.
+- asyncio for I/O orchestration.
+- SQLAlchemy 2 async with asyncpg.
+- PostgreSQL 16.
+- Alembic migrations.
+- Pydantic settings and validation.
+- HTTPX for REST adapters.
+- websockets for Bybit public streams.
+- aiogram for Telegram.
+- structlog JSON logs.
+- Prometheus metrics.
+- pytest, pytest-asyncio, Ruff, and mypy.
 
-The same application image supports separate process roles:
+External provider response shapes are normalized at adapter boundaries. Domain
+logic must not depend directly on Bybit, CoinGecko, or Telegram SDK payloads.
 
-- `api`: health, readiness, metrics, and future administration endpoints.
-- `worker`: universe refresh, market data, candle aggregation, strategy
-  analysis, signal tracking, and recovery.
-- `telegram`: commands, localized messages, and notification delivery.
-- `postgres`: durable application state.
-
-For local MVP deployment, `worker` is a single replica. Horizontal scaling is
-not enabled until ownership and partitioning of WebSocket subscriptions are
-implemented.
+## 3. Runtime Topology
 
 ```mermaid
 flowchart LR
-    CG["CoinGecko REST"] --> U["Universe module"]
-    BR["Bybit REST"] --> M["Market data module"]
-    BW["Bybit WebSocket"] --> M
-    U --> DB[("PostgreSQL")]
-    M --> DB
-    M --> C["Candle aggregator"]
-    C --> S["SMC strategy engine"]
-    S --> G["Signal and risk engine"]
-    G --> L["Virtual lifecycle tracker"]
-    G --> O["Notification outbox"]
-    L --> DB
-    O --> T["Telegram service"]
-    T --> TG["Telegram Bot API"]
-    A["FastAPI health/admin"] --> DB
+    CG["CoinGecko REST"] --> U["Universe refresh"]
+    BR["Bybit public REST"] --> MD["Market data"]
+    BW["Bybit public WebSocket"] --> MD
+    MD --> DB[("PostgreSQL")]
+    U --> DB
+    DB --> AGG["Candle aggregation"]
+    AGG --> STR["SMC strategy"]
+    STR --> SIG["Signal policy"]
+    SIG --> LIFE["Virtual lifecycle"]
+    SIG --> OUT["Notification outbox"]
+    LIFE --> OUT
+    LIFE --> EXEC["Live execution"]
+    EXEC --> BP["Bybit private REST"]
+    EXEC --> OUT
+    OUT --> TG["Telegram service"]
+    TG --> API["Telegram Bot API"]
+    HTTP["FastAPI"] --> DB
 ```
 
-## 4. Module boundaries
+## 4. Module Boundaries
 
 ### 4.1 Universe
 
-Responsibilities:
+Selects the active trading universe:
 
-- Refresh the capitalization ranking once per day.
-- Apply stablecoin, wrapped-asset, tokenized-stock, leveraged-token, and manual
-  denylist filters.
-- Intersect ranked assets with active Bybit USDT Linear Perpetual contracts.
-- Apply liquidity, spread, age, and data-quality filters.
-- Activate the first 30 eligible assets for the MVP. The configured universe
-  may later be increased up to the initial supported maximum of 60.
-- Preserve the previous valid universe when CoinGecko is unavailable.
+- fetch ranking from CoinGecko;
+- filter stablecoins, wrapped assets, tokenized stocks, leveraged tokens, and
+  manual denylist entries;
+- intersect with active Bybit USDT linear perpetual instruments;
+- apply spread, liquidity, age, and data-quality filters;
+- keep 30 active symbols for current live testing.
 
-Outputs are versioned universe snapshots. A symbol is never removed from
-tracking while it has an active signal or virtual trade.
+The last valid universe is retained when CoinGecko fails.
 
-### 4.2 Market data
+### 4.2 Market Data
 
-Responsibilities:
+Maintains public Bybit data:
 
-- Maintain sharded Bybit WebSocket connections.
-- Ingest Bybit `1m` kline updates for every active universe instrument.
-- Ingest ticker data needed for spread, funding, turnover, mark price, and Open
-  Interest snapshots.
-- Subscribe to ordered public trades for instruments with a pending or active
-  signal.
-- Backfill and reconcile gaps through REST.
-- Track readiness per symbol and data stream.
+- sharded kline WebSockets for active universe symbols;
+- REST backfill for startup, reconnect, and gap repair;
+- readiness per symbol;
+- gap detection and durable checkpoints;
+- sampled reconciliation against Bybit REST candles.
 
-WebSocket shards are created by configured topic-count and payload-length
-limits. One failed shard must not stop healthy shards.
+The canonical market series is the closed 1m candle in UTC.
 
-### 4.3 Candle aggregation
+### 4.3 Candle Aggregation
 
-The canonical stored market series is the closed `1m` candle in UTC.
-
-The application deterministically aggregates it into:
+Aggregates canonical 1m candles into:
 
 - 5m;
 - 15m;
 - 1H;
 - 4H.
 
-This avoids four independent live candle subscriptions and guarantees that all
-strategy timeframes use the same source series. Aggregates are recalculated
-when a repaired 1m candle changes.
+Aggregation is deterministic, idempotent, resumable, and batch-limited so
+historical rebuilds do not starve live processing.
 
-Exchange timestamps define candle boundaries. Local machine time must never
-define market intervals.
+### 4.4 SMC Core
 
-Historical aggregation runs in bounded batches with a durable per-symbol source
-cursor. Live closed candles enqueue higher-priority work, so recovery cannot
-starve current market processing. An aggregate is withheld unless every
-contiguous 1m source candle is present.
+`smc_core` is a pure synchronous package. It detects:
 
-Aggregation jobs are idempotent and requeued when canonical 1m data is repaired.
-Sampled aggregates are reconciled against direct Bybit timeframe candles, with
-one recent active-universe sample per timeframe in each standard cycle.
+- swings;
+- BOS;
+- CHOCH/MSS;
+- liquidity sweeps;
+- equal highs/lows;
+- FVGs;
+- displacement;
+- Order Blocks;
+- dealing ranges;
+- premium/discount.
 
-### 4.4 SMC strategy engine
+It has no dependency on Bybit, PostgreSQL, FastAPI, asyncio, or Telegram.
 
-Responsibilities:
+### 4.5 Strategy and Signal Policy
 
-- Detect swings, BOS, CHOCH/MSS, sweeps, equal highs/lows, FVGs, Order Blocks,
-  displacement, and premium/discount.
-- Build immutable analysis snapshots from closed candles.
-- Evaluate LONG and SHORT setup rules.
-- Return score components and evidence without performing notification or
-  persistence side effects.
+The strategy service:
 
-The engine is a pure domain library wherever practical. Given the same candles
-and strategy configuration, it must return the same result.
+- loads closed multi-timeframe candles;
+- runs SMC analysis through a bounded process pool;
+- evaluates LONG and SHORT candidates;
+- persists accepted and suppressed candidates;
+- applies score threshold, cooldown, one-active-signal-per-symbol,
+  portfolio/burst limits, and BTC circuit breaker.
 
-The exact v1 primitive definitions and boundary behavior are documented in
-`docs/smc-core.md`. Infrastructure code may schedule `smc_core` work, but it
-must not add exchange, persistence, or event-loop behavior to the domain
-package.
+Accepted signals are first created as `preparing` so trade coverage can be
+established before publication.
 
-Strategy composition, scoring, mandatory filters, risk calculations, and
-snapshot audit rules are documented in `docs/strategy.md`. Market-data
-readiness gates strategy scheduling during startup, reconnect, and gap repair.
+### 4.6 Virtual Lifecycle
 
-Strategy calculations must never run directly on the market-data event loop
-when they can exceed the configured CPU budget:
+Virtual lifecycle tracking:
 
-- Prefer vectorized NumPy calculations for rolling and array-based work.
-- Small bounded calculations may run inline after profiling confirms that they
-  do not delay WebSocket heartbeat handling.
-- Heavier symbol batches run through a bounded `ProcessPoolExecutor`.
-- `asyncio.to_thread` is reserved for blocking library calls that release the
-  GIL; it is not the default solution for Python CPU-bound strategy code.
-- Analysis jobs are queued with bounded capacity and coalesced by symbol and
-  timeframe so stale duplicate recalculations cannot accumulate.
-- WebSocket ingestion, persistence, and heartbeat tasks remain responsive while
-  analysis jobs execute.
+- subscribes to Bybit public trades only for symbols with pending or active
+  signals;
+- uses a REST overlap to close the WebSocket subscription handshake window;
+- resolves entry, stop, TP1, TP2, invalidation, and expiration by exchange
+  event order;
+- stores signal events and virtual trade state;
+- falls back conservatively when exact event order cannot be proven.
 
-Worker readiness and metrics include event-loop lag, analysis queue depth,
-analysis duration by timeframe, and missed processing deadlines.
+Virtual PnL includes estimated taker fees and funding.
 
-### 4.5 Signal and risk engine
+### 4.7 Live Execution
 
-Responsibilities:
+Live execution is part of the worker and is disabled by default.
 
-- Validate the minimum score and reward-to-risk.
-- Calculate entry, invalidation, Stop Loss, targets, position size, margin,
-  leverage warning, and estimated costs.
-- Apply per-symbol deduplication, cooldown, global burst limits, and the BTC
-  circuit breaker.
-- Persist accepted and suppressed candidates.
-- Create a transactional notification outbox entry for accepted signals.
+It runs only when:
 
-The signal and its outbox event are committed in one database transaction.
+```dotenv
+EXECUTION_ENABLED=true
+EXECUTION_MODE=auto
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+```
 
-### 4.6 Virtual lifecycle tracker
+Execution flow:
 
-Responsibilities:
+1. Virtual lifecycle marks a signal as `entered`.
+2. Execution repository claims a live entry if portfolio guards allow it.
+3. Worker fetches current Bybit wallet balance.
+4. Worker calculates risk-based quantity and may downsize risk to fit margin.
+5. Worker checks current bid/ask against slippage and entry-zone guard.
+6. Worker sets leverage.
+7. Worker submits market entry.
+8. Worker reads actual Bybit position size.
+9. Worker sets full-position stop.
+10. When virtual lifecycle reaches TP1 or terminal state, worker sends
+    reduce-only orders as needed.
+11. On live close, worker fetches Bybit closed PnL and adds it to the Telegram
+    outbox payload.
 
-- Subscribe to public trades before an accepted signal is published.
-- Track entry-zone touch, invalidation, Stop Loss, TP1, and TP2 in exchange
-  event order.
-- Persist the last processed exchange timestamp and event identity.
-- Resume from the durable checkpoint after restart.
-- Fall back to reconciled 1m candles and conservative ambiguity handling when
-  ordered events cannot be recovered.
-- Calculate fees, funding estimates, realized R multiples, and final outcome.
+Execution fails closed. A failed live execution does not stop virtual tracking.
 
-To avoid missing an immediate fill, the publication flow is:
+Current live guards:
 
-1. Persist the accepted signal as `preparing`.
-2. Record a `tracking_from` exchange timestamp immediately before requesting
-   the public-trade subscription.
-3. Start and acknowledge the public-trade subscription, buffering all received
-   events.
-4. Request recent public trades through Bybit REST covering `tracking_from`
-   through the first buffered WebSocket event.
-5. Merge REST and buffered WebSocket events by exchange trade identity and
-   timestamp, remove duplicates, and replay them in exchange order.
-6. Record the durable tracking checkpoint.
-7. Change the signal to `active` and create its outbox message.
+- max open positions;
+- max trades per UTC day;
+- max daily live loss;
+- available margin;
+- adaptive minimum risk;
+- configured leverage and max effective leverage;
+- current bid/ask slippage;
+- exchange min/max quantity and notional constraints;
+- reduce-only close handling for already-flat positions.
 
-The REST overlap closes the handshake window between signal calculation and
-the first received WebSocket trade. Its time range and page limits must be
-large enough to prove continuous coverage. If complete ordered coverage cannot
-be established, the signal is suppressed and not published. A latest-price
-snapshot alone is not sufficient because it cannot prove event order.
+### 4.8 Telegram
 
-### 4.7 Telegram
+Telegram service:
 
-Responsibilities:
+- allows only configured user IDs;
+- handles private commands;
+- renders RU/EN messages;
+- consumes `notification_outbox`;
+- creates per-user delivery records;
+- retries transient failures with bounded backoff;
+- avoids duplicate logical delivery through idempotency keys.
 
-- Restrict access to configured Telegram user IDs.
-- Process commands and settings.
-- Render Russian and English messages from structured signal data.
-- Deliver outbox messages idempotently.
-- Retry temporary Telegram failures with bounded exponential backoff.
-- Avoid duplicate delivery through a unique message idempotency key.
+New signal messages can be schedule-filtered. Lifecycle and service messages
+continue outside the new-signal window.
 
-### 4.8 Health and operations
+### 4.9 Observation
 
-Responsibilities:
+Observation windows freeze a strategy version and produce reports over
+persisted virtual results. Current reports focus on virtual outcomes. Live
+execution records are stored, and live-close Telegram messages include Bybit
+real PnL, but full live-vs-virtual analytics are still a next step.
 
-- Expose `/health/live`, `/health/ready`, and `/metrics`.
-- Report stale streams and recovery status per instrument.
-- Emit one bounded service warning for sustained upstream failures.
-- Provide structured audit events for strategy configuration, recovery,
-  suppression, and state transitions.
-
-## 5. Data flow
-
-### 5.1 Startup and recovery
-
-1. Load active universe, open signals, checkpoints, and strategy version.
-2. Mark market streams as warming.
-3. Connect WebSocket shards and buffer incoming events.
-4. Find gaps from durable checkpoints to current exchange time.
-5. Backfill missing 1m candles and required snapshots through REST.
-6. Merge buffered and REST data by exchange identity and timestamp.
-7. Rebuild affected aggregates and analysis state.
-8. Reconcile open virtual trades.
-9. Mark each healthy symbol ready.
-10. Enable new signal generation only for ready symbols.
-
-### 5.2 Closed-candle analysis
-
-1. Bybit confirms a closed 1m candle.
-2. The candle is upserted idempotently.
-3. Completed higher-timeframe aggregates are generated.
-4. A completed 5m, 15m, 1H, or 4H candle triggers relevant analysis.
-5. The strategy engine creates an analysis snapshot.
-6. The signal engine evaluates, scores, and either accepts or suppresses the
-   candidate.
-7. An accepted signal starts trade-stream tracking before notification.
-
-### 5.3 Signal completion
-
-1. Ordered trades are matched against the signal price levels.
-2. State transitions are committed with their source event identity.
-3. TP, stop, invalidation, or expiration produces an outbox update.
-4. Statistics are recalculated asynchronously from persisted outcomes.
-5. The public-trade subscription is released when no signal needs it.
-
-## 6. Domain state machines
+## 5. State Machines
 
 ### Signal
 
 ```text
-candidate
-  -> suppressed
-  -> preparing
+preparing
   -> active
        -> expired
        -> invalidated
@@ -294,9 +230,31 @@ tp1_reached
   -> ambiguous
 ```
 
-The initial policy closes 50% at TP1, moves the remaining Stop Loss to
-fee-adjusted breakeven, and closes the remainder at TP2 or the adjusted stop.
-The exact policy is stored with the strategy version.
+### Live execution
+
+```text
+none
+  -> entry_submitting
+       -> open
+       -> failed
+
+open
+  -> tp1_submitting
+  -> closing
+  -> failed
+
+tp1_submitting
+  -> tp1_reduced
+  -> failed
+
+tp1_reduced
+  -> closing
+  -> failed
+
+closing
+  -> closed
+  -> failed
+```
 
 ### Market stream
 
@@ -305,157 +263,93 @@ offline -> connecting -> warming -> ready
                          -> degraded -> recovering -> ready
 ```
 
-Only `ready` instruments may generate new signals.
+Only ready symbols can generate new signals.
 
-## 7. PostgreSQL model
+## 6. PostgreSQL Model
 
-Initial tables:
+Important tables:
 
-- `instruments`: Bybit contract identity and exchange constraints.
-- `universe_snapshots`: ranked provider result and filter decisions.
-- `universe_members`: instruments selected for a snapshot.
-- `candles_1m`: canonical closed candles, partitioned by month.
-- `candles_agg`: 5m, 15m, 1H, and 4H aggregates.
-- `market_snapshots`: ticker, spread, funding, turnover, and Open Interest.
-- `data_checkpoints`: durable stream and backfill positions.
-- `data_gaps`: detected recovery ranges and outcomes.
-- `strategy_versions`: immutable configuration snapshots.
-- `analysis_snapshots`: structures and score evidence.
-- `signal_candidates`: accepted and suppressed candidates.
-- `signals`: published signal levels and lifecycle state.
-- `signal_events`: immutable signal state transitions.
-- `virtual_trades`: risk, costs, result, and ambiguity flag.
-- `user_settings`: schedule, language, risk, and thresholds.
-- `notification_outbox`: durable idempotent Telegram delivery.
-- `audit_events`: operational and configuration history.
+- `instruments`;
+- `universe_snapshots`;
+- `universe_members`;
+- `candles_1m`;
+- `candles_agg`;
+- `market_snapshots`;
+- `data_checkpoints`;
+- `data_gaps`;
+- `strategy_versions`;
+- `analysis_snapshots`;
+- `signal_candidates`;
+- `signals`;
+- `signal_events`;
+- `virtual_trades`;
+- `live_executions`;
+- `user_settings`;
+- `notification_outbox`;
+- `notification_deliveries`;
+- `evaluation_windows`.
 
-Prices, quantities, and money use PostgreSQL `NUMERIC`, never binary floating
-point. Timestamps are stored as `TIMESTAMPTZ` in UTC.
+Prices, quantities, and money use PostgreSQL `NUMERIC`.
+Timestamps use UTC `TIMESTAMPTZ`.
 
-Retention defaults:
+## 7. Consistency and Idempotency
 
-- `candles_1m`: 180 days.
-- Aggregated candles: retained indefinitely initially.
-- Signals, trades, strategy versions, and audit records: retained
-  indefinitely.
-
-## 8. Consistency and idempotency
-
-- Candle uniqueness: `(symbol, open_time)`.
-- Exchange event uniqueness: exchange-provided identity where available,
-  otherwise a documented deterministic composite key.
-- Signal uniqueness includes instrument, strategy version, direction, setup
+- Candles are unique by symbol and open time.
+- Signal candidates are deduplicated by symbol, direction, strategy, setup
   anchor, and lifecycle window.
-- State transitions use optimistic locking or compare-and-set updates.
-- Notification delivery uses a unique idempotency key.
-- PostgreSQL advisory locks protect scheduled singleton jobs.
-- All external calls use finite timeouts and bounded retries.
+- Signal state transitions are persisted as immutable events.
+- Telegram outbox uses unique idempotency keys.
+- Live execution has one row per signal.
+- Live orders use deterministic `orderLinkId` values.
+- Reduce-only close paths handle already-flat Bybit positions.
 
-No message broker is required for the MVP. PostgreSQL outbox and checkpoints
-provide durability without introducing Redis or Kafka. A broker can be added
-later if worker throughput or distribution requires it.
+## 8. Failure Behavior
 
-## 9. Security
+- CoinGecko failure keeps the previous universe.
+- Bybit public-data failure degrades only affected symbols.
+- PostgreSQL failure stops signal generation.
+- Telegram failure keeps messages in outbox.
+- Live execution failure records the error and does not create duplicate
+  orders.
+- Slippage failure records `live entry skipped` and sends no Bybit order.
+- Closed PnL fetch failure does not block closing; it only omits `Real PnL` in
+  Telegram and logs the error.
 
-- Secrets are loaded from environment variables or Docker secrets.
-- Bybit API credentials are not required for public market-data MVP.
-- Telegram tokens are never logged.
-- Telegram commands require an allowed user ID.
-- Containers run as a non-root user.
-- Future trading API keys must have withdrawal permissions disabled.
-- Real execution must be a separate adapter protected by an explicit feature
-  flag and kill switch.
+## 9. Deployment
 
-## 10. Failure behavior
-
-- CoinGecko failure: retain the last valid universe and raise a bounded alert.
-- Bybit REST failure: continue live processing where data is complete; delay
-  recovery-dependent signals.
-- Bybit WebSocket failure: reconnect, buffer, backfill, and reconcile before
-  returning affected symbols to ready.
-- PostgreSQL failure: stop generating signals and reconnect; do not rely on
-  memory-only state.
-- Telegram failure: keep messages in the outbox and retry without duplicating
-  signals.
-- Clock drift: use Bybit server timestamps and expose local drift as a health
-  warning.
-
-## 11. Testing strategy
-
-- Unit tests for every SMC primitive using fixed candle fixtures.
-- Property tests for invariants such as mirrored LONG/SHORT calculations and
-  position risk never exceeding configuration.
-- State-machine tests for all signal transitions.
-- Replay tests using recorded Bybit events.
-- Recovery tests with missing, duplicated, and out-of-order data.
-- Intrabar tests where entry, Stop Loss, and Take Profit occur close together.
-- Integration tests against PostgreSQL in containers.
-- Contract tests for normalized Bybit, CoinGecko, and Telegram adapters.
-- End-to-end test from a closed candle through an outbox message.
-
-## 12. Deployment layout
+Local Docker Compose services:
 
 ```text
-docker-compose.yml
-  postgres
-  api
-  worker
-  telegram
+postgres
+api
+worker
+telegram
 ```
 
-All application roles use the same versioned image. Database migrations run as
-an explicit one-shot Compose service or deployment command before application
-startup.
+Migrations run explicitly:
 
-Deployment order:
+```powershell
+docker compose run --rm migrate
+```
 
-1. Stop signal-producing and market-data writer workers gracefully.
-2. Wait for in-flight database transactions and outbox writes to complete.
-3. Run the Alembic migration as a one-shot service.
-4. Start application roles in warming mode.
-5. Complete market-data backfill and reconciliation.
-6. Return workers to ready state and resume signal generation.
+Schema changes follow expand-and-contract rules. Stop or quiesce writers before
+running migrations that can affect hot tables.
 
-Production migrations follow an expand-and-contract policy:
+## 10. Security
 
-- Prefer additive nullable columns, new tables, and concurrent index creation.
-- Avoid column renames, type rewrites, table rewrites, and destructive changes
-  in the same release that changes application behavior.
-- Backfill large datasets in bounded batches outside the schema transaction.
-- Deploy code that supports both old and new schemas before removing legacy
-  structures in a later release.
-- Set explicit PostgreSQL `lock_timeout` and `statement_timeout` values so a
-  migration fails visibly instead of blocking ingestion indefinitely.
-- Every migration requires a tested forward path, recovery procedure, and
-  estimated lock impact.
+- Secrets are supplied through `.env` and are not committed.
+- Bybit API keys must have withdrawal permissions disabled.
+- Telegram bot token is never logged.
+- Telegram access is restricted by allowed user IDs.
+- Containers run as non-root.
+- Live execution is protected by explicit feature flags.
 
-The local environment exposes only the API health port and PostgreSQL when
-development access is explicitly enabled.
+## 11. Deferred Work
 
-## 13. Deferred architecture
-
-The following are intentionally deferred:
-
-- Redis/Kafka event transport.
-- Multiple market-data worker replicas.
+- Persistent real-PnL analytics tables.
+- Live-vs-virtual observation reports.
+- Bybit private WebSocket reconciliation.
+- Manual approval execution mode.
+- Multi-user authorization.
 - Web dashboard.
-- Dedicated analytical warehouse.
-- Real execution and private Bybit streams.
-- Multi-user authorization and billing.
-
-These additions must consume existing domain events and adapters rather than
-embedding exchange logic in the strategy engine.
-
-## 14. Key decisions
-
-1. Python is selected because the system is analysis-heavy and will benefit
-   from its numerical and testing ecosystem.
-2. A modular monolith is selected to minimize operational complexity.
-3. Closed 1m candles are canonical; higher timeframes are aggregated locally.
-4. WebSocket is primary for live data; REST is used for backfill and repair.
-5. Public trades are subscribed only while a signal requires ordered
-   intrabar tracking; a REST overlap closes the subscription handshake gap.
-6. PostgreSQL is both the system of record and durable outbox for the MVP.
-7. Signal generation fails closed when required data is stale or incomplete.
-8. CPU-heavy analysis runs outside the market-data event loop.
-9. Schema changes use worker quiescence and expand-and-contract migrations.
+- Broker-based event bus.

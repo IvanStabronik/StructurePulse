@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -19,3 +21,13 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [json_safe(item) for item in value]
     return value
+
+
+def parameter_checksum(parameters: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            parameters,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()

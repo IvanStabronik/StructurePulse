@@ -28,16 +28,23 @@ class StrategyConfig:
     version: str = "smc-v1.0.0"
     smc: SMCConfig = field(default_factory=SMCConfig)
     weights: ScoreWeights = field(default_factory=ScoreWeights)
+    require_15m_displacement: bool = True
+    require_entry_zone_retest: bool = True
+    ignore_active_evaluation_window: bool = False
     minimum_score: int = 70
     strong_score: int = 85
-    minimum_net_reward_to_risk: Decimal = Decimal(3)
+    minimum_net_reward_to_risk: Decimal = Decimal("1.5")
     signal_lifetime_minutes: int = 90
     reference_balance: Decimal = Decimal(10_000)
     risk_fraction: Decimal = Decimal("0.01")
     maximum_display_leverage: Decimal = Decimal(20)
     liquidation_buffer_multiplier: Decimal = Decimal("1.5")
     stop_atr_buffer: Decimal = Decimal("0.10")
+    minimum_stop_percent: Decimal = Decimal("0.002")
+    maximum_entry_chase_to_tp1: Decimal = Decimal("0.50")
+    maximum_entry_adverse_to_stop: Decimal = Decimal("0.40")
     take_profit_1_r_multiple: Decimal = Decimal("1.5")
+    maximum_trade_notional_usdt: Decimal = Decimal(0)
     minimum_turnover_24h_usdt: Decimal = Decimal(10_000_000)
     maximum_spread_bps: Decimal = Decimal(20)
     minimum_atr_percent: Decimal = Decimal("0.001")
@@ -69,6 +76,14 @@ class StrategyConfig:
             raise ValueError("liquidation_buffer_multiplier must exceed one")
         if self.stop_atr_buffer < 0:
             raise ValueError("stop_atr_buffer cannot be negative")
+        if not Decimal(0) <= self.minimum_stop_percent < Decimal(1):
+            raise ValueError("minimum_stop_percent must be between zero and one")
+        if not Decimal(0) <= self.maximum_entry_chase_to_tp1 <= Decimal(1):
+            raise ValueError("maximum_entry_chase_to_tp1 must be between zero and one")
+        if not Decimal(0) <= self.maximum_entry_adverse_to_stop <= Decimal(1):
+            raise ValueError("maximum_entry_adverse_to_stop must be between zero and one")
+        if self.maximum_trade_notional_usdt < 0:
+            raise ValueError("maximum_trade_notional_usdt cannot be negative")
 
     @property
     def risk_amount(self) -> Decimal:

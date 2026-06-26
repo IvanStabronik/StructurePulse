@@ -8,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crypto_smc.db.models import (
     DataCheckpointRecord,
+    LiveExecutionRecord,
     NotificationDeliveryRecord,
     SignalCandidateRecord,
     SignalRecord,
+    UniverseMemberRecord,
+    UniverseSnapshotRecord,
     VirtualTradeRecord,
 )
 from crypto_smc.db.repositories.notifications import NotificationRepository
@@ -57,6 +60,18 @@ class PerformanceStats:
     ambiguous: int
     pnl: Decimal
     average_r: Decimal
+    live_total: int
+    live_submitted: int
+    live_closed: int
+    live_skipped: int
+    live_failed: int
+    live_skipped_below_score: int
+    live_skipped_notional_cap: int
+    live_skipped_margin: int
+    live_skipped_price: int
+    live_skipped_other: int
+    live_known_real_pnl: Decimal
+    live_known_real_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,12 +174,73 @@ class TelegramQueryRepository:
                     ).where(VirtualTradeRecord.status.in_(TERMINAL_TRADE_STATUSES))
                 )
             ).one()
+            live_rows = (
+                await session.execute(
+                    select(LiveExecutionRecord.status, func.count()).group_by(
+                        LiveExecutionRecord.status
+                    )
+                )
+            ).all()
+            live_pnl_row = (
+                await session.execute(
+                    select(
+                        func.coalesce(func.sum(LiveExecutionRecord.real_pnl), 0),
+                        func.count(LiveExecutionRecord.real_pnl),
+                    ).where(
+                        LiveExecutionRecord.real_pnl.is_not(None),
+                    )
+                )
+            ).one()
+            skip_reason = case(
+                (LiveExecutionRecord.error.like("signal score%"), "score"),
+                (LiveExecutionRecord.error.like("notional %"), "notional"),
+                (LiveExecutionRecord.error.like("available balance%"), "margin"),
+                (LiveExecutionRecord.error.like("live entry skipped:%"), "price"),
+                (LiveExecutionRecord.error.like("symbol % is disabled%"), "symbol"),
+                else_="other",
+            ).label("skip_reason")
+            skipped_rows = (
+                await session.execute(
+                    select(skip_reason, func.count())
+                    .where(LiveExecutionRecord.status == "skipped")
+                    .group_by(skip_reason)
+                )
+            ).all()
+        live_counts = {status: int(count) for status, count in live_rows}
+        skipped_counts = {reason: int(count) for reason, count in skipped_rows}
+        skipped_other = sum(
+            count
+            for reason, count in skipped_counts.items()
+            if reason not in {"score", "notional", "margin", "price"}
+        )
         return PerformanceStats(
             completed=int(row[0]),
             wins=int(row[1]),
             ambiguous=int(row[2]),
             pnl=Decimal(row[3]),
             average_r=Decimal(row[4]),
+            live_total=sum(live_counts.values()),
+            live_submitted=sum(
+                live_counts.get(status, 0)
+                for status in (
+                    "entry_pending",
+                    "open",
+                    "tp1_reduced",
+                    "closed",
+                    "closing",
+                    "tp1_submitting",
+                )
+            ),
+            live_closed=live_counts.get("closed", 0),
+            live_skipped=live_counts.get("skipped", 0),
+            live_failed=live_counts.get("failed", 0),
+            live_skipped_below_score=skipped_counts.get("score", 0),
+            live_skipped_notional_cap=skipped_counts.get("notional", 0),
+            live_skipped_margin=skipped_counts.get("margin", 0),
+            live_skipped_price=skipped_counts.get("price", 0),
+            live_skipped_other=skipped_other,
+            live_known_real_pnl=Decimal(live_pnl_row[0]),
+            live_known_real_count=int(live_pnl_row[1]),
         )
 
     async def status(
@@ -175,7 +251,18 @@ class TelegramQueryRepository:
             market_rows = (
                 await session.execute(
                     select(DataCheckpointRecord.state, func.count())
-                    .where(DataCheckpointRecord.stream == "kline_1m")
+                    .select_from(UniverseMemberRecord)
+                    .join(
+                        UniverseSnapshotRecord,
+                        UniverseSnapshotRecord.id == UniverseMemberRecord.snapshot_id,
+                    )
+                    .outerjoin(
+                        DataCheckpointRecord,
+                        (DataCheckpointRecord.symbol == UniverseMemberRecord.instrument_symbol)
+                        & (DataCheckpointRecord.stream == "kline_1m"),
+                    )
+                    .where(UniverseSnapshotRecord.is_active.is_(True))
+                    .where(UniverseMemberRecord.is_selected.is_(True))
                     .group_by(DataCheckpointRecord.state)
                 )
             ).all()
@@ -380,7 +467,7 @@ def _render_coin(analysis: CoinAnalysis, language: str) -> str:
     )
 
 
-def _render_stats(stats: PerformanceStats, language: str) -> str:
+def _render_legacy_stats(stats: PerformanceStats, language: str) -> str:
     title = "Статистика" if language == "ru" else "Statistics"
     labels = (
         ("Завершено", "Победы", "Неоднозначные", "PnL", "Средний R")
@@ -399,24 +486,75 @@ def _render_stats(stats: PerformanceStats, language: str) -> str:
     )
 
 
-def _render_status(status: ServiceStatus, language: str) -> str:
-    title = "Статус системы" if language == "ru" else "System status"
-    labels = (
-        ("Рынок готов/деградирован", "Ожидают отправки", "Ошибки", "Исход неизвестен")
-        if language == "ru"
-        else (
-            "Market ready/degraded",
-            "Notifications pending",
-            "Notifications failed",
-            "Delivery unknown",
+def _render_stats(stats: PerformanceStats, language: str) -> str:
+    if language == "ru":
+        title = "Статистика"
+        labels = (
+            "Вирт. завершено",
+            "Вирт. победы",
+            "Неоднозначные",
+            "Вирт. PnL",
+            "Средний R",
+            "Live всего",
+            "Live отправлено",
+            "Live закрыто/skip/fail",
+            "Live skip score/notional/margin/price/other",
+            "Изв. real PnL",
         )
-    )
+    else:
+        title = "Statistics"
+        labels = (
+            "Virtual completed",
+            "Virtual wins",
+            "Ambiguous",
+            "Virtual PnL",
+            "Average R",
+            "Live total",
+            "Live submitted",
+            "Live closed/skip/fail",
+            "Live skip score/notional/margin/price/other",
+            "Known real PnL",
+        )
     return "\n".join(
         (
             title,
-            f"{labels[0]}: {status.market_ready}/{status.market_degraded}",
-            f"{labels[1]}: {status.notification_pending}",
-            f"{labels[2]}: {status.notification_failed}",
-            f"{labels[3]}: {status.delivery_unknown}",
+            f"{labels[0]}: {stats.completed}",
+            f"{labels[1]}: {stats.wins}",
+            f"{labels[2]}: {stats.ambiguous}",
+            f"{labels[3]}: {stats.pnl:.4f} USDT",
+            f"{labels[4]}: {stats.average_r:.4f}",
+            f"{labels[5]}: {stats.live_total}",
+            f"{labels[6]}: {stats.live_submitted}",
+            (f"{labels[7]}: {stats.live_closed}/{stats.live_skipped}/{stats.live_failed}"),
+            (
+                f"{labels[8]}: {stats.live_skipped_below_score}/"
+                f"{stats.live_skipped_notional_cap}/{stats.live_skipped_margin}/"
+                f"{stats.live_skipped_price}/{stats.live_skipped_other}"
+            ),
+            f"{labels[9]}: {stats.live_known_real_pnl:.4f} USDT ({stats.live_known_real_count})",
+        )
+    )
+
+
+def _render_status(status: ServiceStatus, language: str) -> str:
+    if language == "ru":
+        return "\n".join(
+            (
+                "Статус системы",
+                f"Рынок готов: {status.market_ready}",
+                f"Проблемные: {status.market_degraded}",
+                f"Ожидают отправки: {status.notification_pending}",
+                f"Ошибки: {status.notification_failed}",
+                f"Исход неизвестен: {status.delivery_unknown}",
+            )
+        )
+    return "\n".join(
+        (
+            "System status",
+            f"Market ready: {status.market_ready}",
+            f"Market degraded: {status.market_degraded}",
+            f"Notifications pending: {status.notification_pending}",
+            f"Notifications failed: {status.notification_failed}",
+            f"Delivery unknown: {status.delivery_unknown}",
         )
     )

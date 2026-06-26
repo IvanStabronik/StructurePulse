@@ -78,6 +78,7 @@ STABLECOIN_SYMBOLS = frozenset(
         "USDD",
         "USDE",
         "USDP",
+        "USD1",
         "USDS",
         "USDT",
     }
