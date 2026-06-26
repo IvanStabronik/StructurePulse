@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -250,6 +250,7 @@ class LiveExecutionRepository:
         max_open_positions: int,
         max_trades_per_day: int,
         max_daily_loss_usdt: Decimal,
+        loss_cooldown_minutes: int,
     ) -> int | None:
         async with session_factory() as session, session.begin():
             if signal.signal_status not in {"active", "entered"}:
@@ -292,6 +293,33 @@ class LiveExecutionRepository:
                     now=now,
                 )
                 return None
+            if loss_cooldown_minutes > 0:
+                cooldown_since = now - timedelta(minutes=loss_cooldown_minutes)
+                recent_loss = await session.scalar(
+                    select(LiveExecutionRecord)
+                    .where(LiveExecutionRecord.symbol == signal.symbol)
+                    .where(LiveExecutionRecord.direction == signal.direction)
+                    .where(LiveExecutionRecord.status == "closed")
+                    .where(LiveExecutionRecord.real_pnl < 0)
+                    .where(LiveExecutionRecord.closed_at >= cooldown_since)
+                    .order_by(LiveExecutionRecord.closed_at.desc())
+                    .limit(1)
+                )
+                if recent_loss is not None:
+                    await self._reject_entry_record(
+                        session,
+                        signal=signal,
+                        risk_usdt=risk_usdt,
+                        qty=qty,
+                        leverage=leverage,
+                        error=(
+                            "recent live loss cooldown active for "
+                            f"{signal.symbol} {signal.direction}: "
+                            f"{loss_cooldown_minutes} minutes"
+                        ),
+                        now=now,
+                    )
+                    return None
 
             record = LiveExecutionRecord(
                 signal_id=signal.signal_id,

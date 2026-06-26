@@ -30,6 +30,7 @@ class LiveExecutionService:
         max_trades_per_day: int,
         max_daily_loss_usdt: Decimal,
         poll_interval_seconds: float,
+        loss_cooldown_minutes: int = 360,
         pending_entry_timeout_seconds: int = 1200,
         min_risk_usdt: Decimal = Decimal("20"),
         max_effective_leverage: Decimal = Decimal("50"),
@@ -60,6 +61,7 @@ class LiveExecutionService:
         self._max_open_positions = max_open_positions
         self._max_trades_per_day = max_trades_per_day
         self._max_daily_loss_usdt = max_daily_loss_usdt
+        self._loss_cooldown_minutes = loss_cooldown_minutes
         self._pending_entry_timeout_seconds = pending_entry_timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
         self._repository = repository or LiveExecutionRepository()
@@ -273,6 +275,7 @@ class LiveExecutionService:
             max_open_positions=self._max_open_positions,
             max_trades_per_day=self._max_trades_per_day,
             max_daily_loss_usdt=self._max_daily_loss_usdt,
+            loss_cooldown_minutes=self._loss_cooldown_minutes,
         )
         if live_id is None:
             return

@@ -281,6 +281,7 @@ class FakeEntryRepository:
         self.rejections = 0
         self.rejected_notify: bool | None = None
         self.claimed_leverage: Decimal | None = None
+        self.claimed_loss_cooldown_minutes: int | None = None
         self.opened_qty: Decimal | None = None
         self.pending_order_id: str | None = None
         self.pending_price: Decimal | None = None
@@ -296,6 +297,7 @@ class FakeEntryRepository:
     async def claim_entry(self, *_: object, **__: object) -> int:
         self.claims += 1
         self.claimed_leverage = __.get("leverage")  # type: ignore[assignment]
+        self.claimed_loss_cooldown_minutes = __.get("loss_cooldown_minutes")  # type: ignore[assignment]
         return 7
 
     async def reject_entry(self, *_: object, **kwargs: object) -> None:
@@ -506,6 +508,7 @@ async def test_enter_raises_leverage_when_risk_fits_instrument_max() -> None:
     assert repository.claims == 1
     assert repository.rejections == 0
     assert repository.claimed_leverage == Decimal("50")
+    assert repository.claimed_loss_cooldown_minutes == 360
     assert repository.pending_order_id == "entry-limit-order"
     assert repository.pending_price == Decimal("70.54")
     assert repository.opened_qty is None

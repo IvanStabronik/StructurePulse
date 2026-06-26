@@ -75,7 +75,8 @@ def test_signal_protection_defaults_are_bounded() -> None:
     assert settings.execution_max_daily_loss_usdt == 30
     assert settings.execution_poll_interval_seconds == 1
     assert settings.execution_max_effective_leverage == 45
-    assert settings.execution_min_signal_score == 80
+    assert settings.execution_min_signal_score == 85
+    assert settings.execution_loss_cooldown_minutes == 360
     assert settings.execution_max_notional_to_wallet_ratio == 6
     assert settings.execution_symbol_allowlist == frozenset()
     assert settings.execution_symbol_denylist == frozenset()

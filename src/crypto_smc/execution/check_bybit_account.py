@@ -27,6 +27,7 @@ async def main() -> None:
     print(f"Max open positions: {settings.execution_max_open_positions}")
     print(f"Max trades per day: {settings.execution_max_trades_per_day}")
     print(f"Max daily loss: {settings.execution_max_daily_loss_usdt} USDT")
+    print(f"Loss cooldown: {settings.execution_loss_cooldown_minutes} minutes")
     print(f"Pending entry timeout: {settings.execution_pending_entry_timeout_seconds}s")
 
     if not settings.bybit_api_key or not settings.bybit_api_secret:
